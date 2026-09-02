@@ -14,11 +14,11 @@ def capabilities(config: dict) -> dict:
     has_song_folder = bool(song_folder)
     has_shell = config.get("allowShell") is True
     has_http_get = callable(config.get("httpGet")) or has_shell
-    has_http_post = callable(config.get("httpPost")) or has_shell
+    has_http_request = callable(config.get("httpRequest"))
     has_download = callable(config.get("downloadFile")) or has_shell
     has_unzip = callable(config.get("unzipFile")) or has_shell
     has_list_files = callable(config.get("listFiles")) or has_shell
-    vote_configured = bool(config.get("voteEndpointTemplate"))
+    vote_configured = bool(config.get("scoreEndpoint"))
     return {
         "songFolder": song_folder,
         "canFetch": has_http_get,
@@ -29,7 +29,7 @@ def capabilities(config: dict) -> dict:
         "canDownloadZip": has_song_folder and has_download,
         "canExtractZip": has_song_folder and has_download and has_unzip,
         "canScanInstalled": has_song_folder and has_list_files,
-        "canVote": vote_configured and has_http_post,
+        "canVote": vote_configured and has_http_request,
         "voteConfigured": vote_configured,
     }
 
@@ -56,12 +56,12 @@ def main() -> int:
             "allowShell": False,
             "songFolder": "C:/Songs",
             "httpGet": marker,
-            "httpPost": marker,
+            "httpRequest": marker,
             "downloadFile": marker,
             "unzipFile": marker,
             "listFiles": marker,
             "openUrl": marker,
-            "voteEndpointTemplate": "/vote/{id}/{direction}",
+            "scoreEndpoint": "http://127.0.0.1:18080/wanapi/score/local-key",
         }
     )
     assert hooked["canFetch"] is True

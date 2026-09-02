@@ -1,6 +1,6 @@
 {
   "modId": "RagnaCustomsApi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "globals": [
     "RagnaCustomsApi",
     "RagnaCustoms"
@@ -167,19 +167,49 @@
       "signature": "downloadSong(songOrId, options)"
     },
     {
+      "name": "discoverScoreEndpoint",
+      "category": "voting",
+      "signature": "discoverScoreEndpoint()"
+    },
+    {
+      "name": "deriveVoteEndpoint",
+      "category": "voting",
+      "signature": "deriveVoteEndpoint(scoreEndpoint)"
+    },
+    {
+      "name": "redactEndpoint",
+      "category": "voting",
+      "signature": "redactEndpoint(endpoint)"
+    },
+    {
+      "name": "getVote",
+      "category": "voting",
+      "signature": "getVote(beatmap, callback, options)"
+    },
+    {
+      "name": "setVote",
+      "category": "voting",
+      "signature": "setVote(beatmap, direction, callback, options)"
+    },
+    {
+      "name": "clearVote",
+      "category": "voting",
+      "signature": "clearVote(beatmap, callback, options)"
+    },
+    {
       "name": "vote",
       "category": "voting",
-      "signature": "vote(songOrId, direction, options)"
+      "signature": "vote(songOrHash, direction, options)"
     },
     {
       "name": "upvote",
       "category": "voting",
-      "signature": "upvote(songOrId, options)"
+      "signature": "upvote(songOrHash, options)"
     },
     {
       "name": "downvote",
       "category": "voting",
-      "signature": "downvote(songOrId, options)"
+      "signature": "downvote(songOrHash, options)"
     }
   ]
 }

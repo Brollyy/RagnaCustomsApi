@@ -1,12 +1,14 @@
 # RagnaCustomsApi
 
-Standalone UE4SS Lua library mod for exposing RagnaCustoms song discovery and install helpers to other Ragnarock mods.
+Two RagnaModManager-managed UE4SS Lua mods: a reusable RagnaCustoms client library and Flat/PC-VR Results voting controls.
 
 Build a RagnaModManager package:
 
 ```bash
 python3 scripts/package.py --output dist/RagnaCustomsApi.rmod
+python3 scripts/package_vote.py --output dist/RagnaCustomsVote.rmod
 python3 scripts/verify_release.py --package dist/RagnaCustomsApi.rmod
+python3 scripts/verify_vote_release.py --package dist/RagnaCustomsVote.rmod
 ```
 
 Install it through RagnaModManager:
@@ -19,14 +21,12 @@ python3 scripts/install_rmod.py \
 python3 scripts/check_install.py --game-dir "/path/to/steamapps/common/Ragnarock" --source-root .
 ```
 
-The `.rmod` archive contains a root `manifest.json`, a small `Manager/` marker declared as `ue4ss-lua` with `modFolder` set to `RagnaCustomsApi`, and explicit manager-deployed compatibility entries for both UE4SS layouts seen locally:
+Each `.rmod` contains a root manifest and its `Scripts/` tree. RagnaModManager 1.1 detects the active UE4SS layout, deploys the files, and writes `mods.txt`. `RagnaCustomsVote` declares `ragnacustoms-api >=0.2.0`, so the manager blocks invalid profiles and loads the library first.
 
 ```text
 Ragnarock/Binaries/Win64/ue4ss/Mods/RagnaCustomsApi/Scripts/*.lua
 Ragnarock/Binaries/Win64/Mods/RagnaCustomsApi/Scripts/*.lua
 ```
-
-The marker lets RagnaModManager enable the mod in `mods.txt`; the uppercase `Scripts` targets match the folder used by the bundled UE4SS Lua mods. RagnaModManager imports the package into its local library, enables `ragnacustoms-api`, and deploys the Lua files into UE4SS.
 
 Optionally probe the live RagnaCustoms endpoints used by the library:
 
@@ -130,13 +130,17 @@ Use `scanInstalledSongs()` to inspect the resolved `CustomSongs` folder. Downloa
 
 ## Transport Hooks
 
-UE4SS Lua builds differ. The default transport uses shell `curl` and `unzip` through `io.popen`, but callers can inject safer runtime-specific hooks:
+Catalog/download helpers retain their injectable transports. Voting uses Ragnarock's bundled VaRest plugin asynchronously; tests may inject the same callback-shaped `httpRequest` hook:
 
 ```lua
 RagnaCustoms.configure({
     allowShell = false,
     httpGet = function(url, config)
         return MyHttpGet(url)
+    end,
+    httpRequest = function(method, url, body, callback, config)
+        MyAsyncRequest(method, url, body, callback)
+        return "request-id"
     end,
     downloadFile = function(url, destination, config)
         return MyDownload(url, destination)
@@ -182,22 +186,20 @@ Use `RagnaCustoms.on("*", callback)` to observe all events. Use `RagnaCustoms.of
 
 ## Voting
 
-`upvote`, `downvote`, and `vote` are exposed, but RagnaCustoms voting is tied to authenticated site/app state and may require a played-song entitlement. Configure the endpoint template and headers/API key for the authenticated environment you are integrating with:
+Voting derives `/vote` from Ragnarock's existing configured `/wanapi/score/{apiKey}` endpoint. It first asks the live game for `GetCustomApiURLs`, then falls back to the local `Game.ini`. A direct `scoreEndpoint` override exists for guarded loopback tests; cleartext non-loopback URLs are rejected.
 
 ```lua
 RagnaCustoms.configure({
-    apiKey = "optional-key",
-    headers = {
-        Cookie = "optional-auth-cookie",
-    },
-    voteEndpointTemplate = "/your/vote/route/{id}/{direction}",
+    scoreEndpoint = "http://127.0.0.1:18080/wanapi/score/local-test-key",
 })
 
-RagnaCustoms.upvote(6037)
-RagnaCustoms.downvote(6037)
+RagnaCustoms.getVote(beatmapHash, function(result) end)
+RagnaCustoms.setVote(beatmapHash, "up", function(result) end)
+RagnaCustoms.setVote(beatmapHash, "down", function(result) end)
+RagnaCustoms.clearVote(beatmapHash, function(result) end)
 ```
 
-Without `voteEndpointTemplate`, vote calls fail explicitly instead of guessing a private route.
+Callbacks receive `{ ok = true, state = { currentVote, upvotes, downvotes, ... } }` or `{ ok = false, error = { code, message } }`. Requests are generation-checked so an older response cannot overwrite a newer selection. Endpoint values are redacted whenever exposed through status/config/events.
 
 ## Notes
 

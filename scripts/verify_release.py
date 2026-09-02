@@ -61,7 +61,7 @@ def package_hashes(package_path: Path) -> dict[str, str]:
         raise AssertionError(f"missing package: {package_path}")
     with zipfile.ZipFile(package_path) as archive:
         names = set(archive.namelist())
-        expected_names = {"manifest.json", "Manager/enable.txt", "Manager/legacy_mods.txt", *EXPECTED_FILES}
+        expected_names = {"manifest.json", *EXPECTED_FILES}
         extra = names - expected_names
         missing = expected_names - names
         if missing or extra:
@@ -76,32 +76,13 @@ def package_hashes(package_path: Path) -> dict[str, str]:
         if manifest.get("game") != "ragnarock":
             raise AssertionError("manifest game must be ragnarock")
         files = manifest.get("files")
-        expected_files_manifest = [
-            {"type": "ue4ss-lua", "source": "Manager", "modFolder": MOD_NAME},
-            {"type": "config", "source": "Scripts/main.lua", "target": f"Mods/{MOD_NAME}/Scripts/main.lua"},
-            {
-                "type": "config",
-                "source": "Scripts/ragnacustoms_api.lua",
-                "target": f"Mods/{MOD_NAME}/Scripts/ragnacustoms_api.lua",
-            },
-            {
-                "type": "loose-file",
-                "source": "Scripts/main.lua",
-                "target": f"Ragnarock/Binaries/Win64/Mods/{MOD_NAME}/Scripts/main.lua",
-            },
-            {
-                "type": "loose-file",
-                "source": "Scripts/ragnacustoms_api.lua",
-                "target": f"Ragnarock/Binaries/Win64/Mods/{MOD_NAME}/Scripts/ragnacustoms_api.lua",
-            },
-            {
-                "type": "loose-file",
-                "source": "Manager/legacy_mods.txt",
-                "target": "Ragnarock/Binaries/Win64/Mods/mods.txt",
-            },
-        ]
+        expected_files_manifest = [{"type": "ue4ss-lua", "source": "Scripts/", "modFolder": MOD_NAME}]
         if files != expected_files_manifest:
             raise AssertionError(f"unexpected manifest files: {files}")
+        if manifest.get("version") != "0.2.0":
+            raise AssertionError("manifest version must be 0.2.0")
+        if manifest.get("requires") != {"manager": ">=1.1.0"}:
+            raise AssertionError("manifest must require the dependency-aware manager")
         return {
             relative: sha256_bytes(archive.read(relative))
             for relative in EXPECTED_FILES

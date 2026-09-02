@@ -47,16 +47,6 @@ def download_url(song_id: int, api_key: str | None = None) -> str:
     return join_url(API_BASE_URL, f"/songs/download/{song_id}")
 
 
-def vote_request(song_or_id, direction: str, template: str) -> tuple[str, str]:
-    song_id = song_or_id["id"] if isinstance(song_or_id, dict) else song_or_id
-    clean_direction = direction.lower()
-    if clean_direction not in {"up", "down"}:
-        raise ValueError("vote direction must be 'up' or 'down'")
-    path = template.replace("{id}", str(song_id)).replace("{direction}", clean_direction)
-    body = f"songId={quote(str(song_id), safe='')}&direction={quote(clean_direction, safe='')}"
-    return join_url(BASE_URL, path), body
-
-
 def main() -> int:
     urls = urls_for({"id": 6037})
     assert urls["oneClick"] == "ragnac://install/6037"
@@ -76,10 +66,6 @@ def main() -> int:
     assert download_url(6037) == "https://api.ragnacustoms.com/songs/download/6037"
     assert download_url(6037, "secret-key") == "https://api.ragnacustoms.com/songs/download/6037/secret-key"
 
-    vote_url, vote_body = vote_request(6037, "UP", "/vote/{id}/{direction}")
-    assert vote_url == "https://ragnacustoms.com/vote/6037/up"
-    assert vote_body == "songId=6037&direction=up"
-
     source = LIB.read_text()
     for expected in [
         "ragnac://install/",
@@ -89,8 +75,8 @@ def main() -> int:
         "/song/partial/preview/",
         "seed = { id = tonumber(songOrId) }",
         "fetchApiSongs(\"/api/song/\" .. tostring(seed.id))",
-        "voteEndpointTemplate is required",
-        "vote direction must be 'up' or 'down'",
+        "function Api.getVote",
+        "function Api.setVote",
         "method = \"oneClick\"",
     ]:
         assert expected in source, f"missing install/vote source guard: {expected}"

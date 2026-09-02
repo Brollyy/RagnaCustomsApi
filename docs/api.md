@@ -27,9 +27,11 @@ Supported options:
     gameDir = nil,
     apiKey = nil,
     headers = {},
-    voteEndpointTemplate = nil,
+    scoreEndpoint = nil, -- normally discovered from the game's CustomApiURLs
+    gameConfigPath = nil,
     httpGet = nil,
     httpPost = nil,
+    httpRequest = nil,
     downloadFile = nil,
     unzipFile = nil,
     openUrl = nil,
@@ -295,9 +297,14 @@ Installed entry shape:
 ## Voting
 
 ```lua
-RagnaCustoms.vote(song, "up")
-RagnaCustoms.upvote(song)
-RagnaCustoms.downvote(song)
+local scoreEndpoint = RagnaCustoms.discoverScoreEndpoint()
+local voteEndpoint = RagnaCustoms.deriveVoteEndpoint(scoreEndpoint)
+local safeForLogs = RagnaCustoms.redactEndpoint(scoreEndpoint)
+
+RagnaCustoms.getVote(beatmapHash, function(result) end)
+RagnaCustoms.setVote(beatmapHash, "up", function(result) end)
+RagnaCustoms.setVote(beatmapHash, "down", function(result) end)
+RagnaCustoms.clearVote(beatmapHash, function(result) end)
 ```
 
-Voting requires `voteEndpointTemplate`; placeholders `{id}` and `{direction}` are replaced before POST.
+The vote endpoint is the `/vote` child of the exact configured `/wanapi/score/{apiKey}` base. VaRest requests are asynchronous, desired-state PUTs are retry-safe, stale replies are ignored, and exposed endpoint strings redact the API-key segment.

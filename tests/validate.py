@@ -8,12 +8,15 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 LIB = ROOT / "Mods" / "RagnaCustomsApi" / "Scripts" / "ragnacustoms_api.lua"
 MAIN = ROOT / "Mods" / "RagnaCustomsApi" / "Scripts" / "main.lua"
+VOTE_MAIN = ROOT / "Mods" / "RagnaCustomsVote" / "Scripts" / "main.lua"
 INSTALLER = ROOT / "scripts" / "install.py"
 RMM_INSTALLER = ROOT / "scripts" / "install_rmod.py"
 RUNTIME_LOG_CHECKER = ROOT / "scripts" / "check_runtime_log.py"
 CHECKER = ROOT / "scripts" / "check_install.py"
 PACKAGER = ROOT / "scripts" / "package.py"
+VOTE_PACKAGER = ROOT / "scripts" / "package_vote.py"
 RELEASE_VERIFIER = ROOT / "scripts" / "verify_release.py"
+VOTE_RELEASE_VERIFIER = ROOT / "scripts" / "verify_vote_release.py"
 API_PROBE = ROOT / "scripts" / "probe_api.py"
 RUN_CHECKS = ROOT / "scripts" / "run_checks.py"
 EXAMPLE = ROOT / "examples" / "ConsumerExample" / "Scripts" / "main.lua"
@@ -28,12 +31,15 @@ FORBIDDEN_PACKAGING_NAME = "Ragna" + "Loader"
 def main() -> int:
     assert LIB.exists(), f"missing {LIB}"
     assert MAIN.exists(), f"missing {MAIN}"
+    assert VOTE_MAIN.exists(), f"missing {VOTE_MAIN}"
     assert INSTALLER.exists(), f"missing {INSTALLER}"
     assert RMM_INSTALLER.exists(), f"missing {RMM_INSTALLER}"
     assert RUNTIME_LOG_CHECKER.exists(), f"missing {RUNTIME_LOG_CHECKER}"
     assert CHECKER.exists(), f"missing {CHECKER}"
     assert PACKAGER.exists(), f"missing {PACKAGER}"
+    assert VOTE_PACKAGER.exists(), f"missing {VOTE_PACKAGER}"
     assert RELEASE_VERIFIER.exists(), f"missing {RELEASE_VERIFIER}"
+    assert VOTE_RELEASE_VERIFIER.exists(), f"missing {VOTE_RELEASE_VERIFIER}"
     assert API_PROBE.exists(), f"missing {API_PROBE}"
     assert RUN_CHECKS.exists(), f"missing {RUN_CHECKS}"
     assert EXAMPLE.exists(), f"missing {EXAMPLE}"
@@ -117,8 +123,9 @@ def main() -> int:
     assert "zipfile.ZipFile" in PACKAGER.read_text()
     assert '"ue4ss-lua"' in PACKAGER.read_text()
     assert '"modFolder": MOD_NAME' in PACKAGER.read_text()
-    assert '"type": "config"' in PACKAGER.read_text()
-    assert 'f"Mods/{MOD_NAME}/Scripts/main.lua"' in PACKAGER.read_text()
+    assert '"source": "Scripts/"' in PACKAGER.read_text()
+    assert '">=1.1.0"' in PACKAGER.read_text()
+    assert '"ragnacustoms-api": ">=0.2.0"' in VOTE_PACKAGER.read_text()
     assert "package_hashes" in RELEASE_VERIFIER.read_text()
     assert "legacy_installed_copy" in RELEASE_VERIFIER.read_text()
     assert "probe_song" in API_PROBE.read_text()
@@ -150,34 +157,12 @@ def main() -> int:
             names = set(archive.namelist())
             package_manifest = json.loads(archive.read("manifest.json"))
         assert "manifest.json" in names
-        assert "Manager/enable.txt" in names
-        assert "Manager/legacy_mods.txt" in names
         assert "Scripts/main.lua" in names
         assert "Scripts/ragnacustoms_api.lua" in names
         assert package_manifest["id"] == "ragnacustoms-api"
+        assert package_manifest["version"] == "0.2.0"
         assert package_manifest["files"] == [
-            {"type": "ue4ss-lua", "source": "Manager", "modFolder": "RagnaCustomsApi"},
-            {"type": "config", "source": "Scripts/main.lua", "target": "Mods/RagnaCustomsApi/Scripts/main.lua"},
-            {
-                "type": "config",
-                "source": "Scripts/ragnacustoms_api.lua",
-                "target": "Mods/RagnaCustomsApi/Scripts/ragnacustoms_api.lua",
-            },
-            {
-                "type": "loose-file",
-                "source": "Scripts/main.lua",
-                "target": "Ragnarock/Binaries/Win64/Mods/RagnaCustomsApi/Scripts/main.lua",
-            },
-            {
-                "type": "loose-file",
-                "source": "Scripts/ragnacustoms_api.lua",
-                "target": "Ragnarock/Binaries/Win64/Mods/RagnaCustomsApi/Scripts/ragnacustoms_api.lua",
-            },
-            {
-                "type": "loose-file",
-                "source": "Manager/legacy_mods.txt",
-                "target": "Ragnarock/Binaries/Win64/Mods/mods.txt",
-            },
+            {"type": "ue4ss-lua", "source": "Scripts/", "modFolder": "RagnaCustomsApi"}
         ]
 
     for path in ROOT.rglob("*"):

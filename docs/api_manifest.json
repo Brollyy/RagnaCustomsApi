@@ -1,0 +1,185 @@
+{
+  "modId": "RagnaCustomsApi",
+  "version": "0.1.0",
+  "globals": [
+    "RagnaCustomsApi",
+    "RagnaCustoms"
+  ],
+  "exports": [
+    {
+      "name": "configure",
+      "category": "config",
+      "signature": "configure(options)"
+    },
+    {
+      "name": "getConfig",
+      "category": "config",
+      "signature": "getConfig()"
+    },
+    {
+      "name": "setRuntimePaths",
+      "category": "runtime",
+      "signature": "setRuntimePaths(paths)"
+    },
+    {
+      "name": "getRuntimePaths",
+      "category": "runtime",
+      "signature": "getRuntimePaths()"
+    },
+    {
+      "name": "resolveSongFolder",
+      "category": "runtime",
+      "signature": "resolveSongFolder()"
+    },
+    {
+      "name": "lastError",
+      "category": "status",
+      "signature": "lastError()"
+    },
+    {
+      "name": "getCapabilities",
+      "category": "status",
+      "signature": "getCapabilities()"
+    },
+    {
+      "name": "getStatus",
+      "category": "status",
+      "signature": "getStatus()"
+    },
+    {
+      "name": "isReady",
+      "category": "status",
+      "signature": "isReady()"
+    },
+    {
+      "name": "on",
+      "category": "events",
+      "signature": "on(eventName, callback)"
+    },
+    {
+      "name": "off",
+      "category": "events",
+      "signature": "off(eventName, callback)"
+    },
+    {
+      "name": "urlsFor",
+      "category": "urls",
+      "signature": "urlsFor(songOrId)"
+    },
+    {
+      "name": "preloadSongs",
+      "category": "catalog",
+      "signature": "preloadSongs(options)"
+    },
+    {
+      "name": "refreshSongs",
+      "category": "catalog",
+      "signature": "refreshSongs()"
+    },
+    {
+      "name": "preloadAllSongs",
+      "category": "catalog",
+      "signature": "preloadAllSongs(maxPages)"
+    },
+    {
+      "name": "checkUpdates",
+      "category": "catalog",
+      "signature": "checkUpdates()"
+    },
+    {
+      "name": "getSongList",
+      "category": "catalog",
+      "signature": "getSongList(listId)"
+    },
+    {
+      "name": "search",
+      "category": "search",
+      "signature": "search(query, options)"
+    },
+    {
+      "name": "searchCached",
+      "category": "search",
+      "signature": "searchCached(query)"
+    },
+    {
+      "name": "getCachedSongs",
+      "category": "catalog",
+      "signature": "getCachedSongs()"
+    },
+    {
+      "name": "toUiSong",
+      "category": "ui",
+      "signature": "toUiSong(songOrId, options)"
+    },
+    {
+      "name": "toUiSongs",
+      "category": "ui",
+      "signature": "toUiSongs(songs, options)"
+    },
+    {
+      "name": "searchUi",
+      "category": "ui",
+      "signature": "searchUi(query, options)"
+    },
+    {
+      "name": "getSongUi",
+      "category": "ui",
+      "signature": "getSongUi(songOrId, options)"
+    },
+    {
+      "name": "scanInstalledSongs",
+      "category": "installed",
+      "signature": "scanInstalledSongs(options)"
+    },
+    {
+      "name": "getInstalledSong",
+      "category": "installed",
+      "signature": "getInstalledSong(songOrId, options)"
+    },
+    {
+      "name": "isInstalled",
+      "category": "installed",
+      "signature": "isInstalled(songOrId, options)"
+    },
+    {
+      "name": "compareInstalledWithUpdates",
+      "category": "installed",
+      "signature": "compareInstalledWithUpdates(options)"
+    },
+    {
+      "name": "getSong",
+      "category": "details",
+      "signature": "getSong(songOrId, options)"
+    },
+    {
+      "name": "openOneClick",
+      "category": "install",
+      "signature": "openOneClick(songOrId)"
+    },
+    {
+      "name": "installSong",
+      "category": "install",
+      "signature": "installSong(songOrId, options)"
+    },
+    {
+      "name": "downloadSong",
+      "category": "install",
+      "signature": "downloadSong(songOrId, options)"
+    },
+    {
+      "name": "vote",
+      "category": "voting",
+      "signature": "vote(songOrId, direction, options)"
+    },
+    {
+      "name": "upvote",
+      "category": "voting",
+      "signature": "upvote(songOrId, options)"
+    },
+    {
+      "name": "downvote",
+      "category": "voting",
+      "signature": "downvote(songOrId, options)"
+    }
+  ]
+}

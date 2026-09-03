@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import subprocess
 import sys
+import zipfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -13,7 +15,17 @@ DEFAULT_MANAGER_CANDIDATES = (
     Path("/home/brollyy/RiderProjects/RagnaModManager/src/ui/RagnaModManager.Cli/bin/Debug/net9.0/RagnaModManager"),
     Path("/home/brollyy/RiderProjects/RagnaModManager/artifacts/RagnaModManager-linux-x64/RagnaModManager"),
 )
-MOD_ID = "ragnacustoms-api"
+
+def read_package_mod_id(package: Path) -> str:
+    try:
+        with zipfile.ZipFile(package) as archive:
+            manifest = json.loads(archive.read("manifest.json"))
+    except (KeyError, json.JSONDecodeError, zipfile.BadZipFile) as exc:
+        raise SystemExit(f"Package manifest could not be read: {package}: {exc}") from exc
+    mod_id = manifest.get("id") if isinstance(manifest, dict) else None
+    if not isinstance(mod_id, str) or not mod_id.strip():
+        raise SystemExit(f"Package manifest has no valid mod id: {package}")
+    return mod_id.strip()
 
 
 def resolve_manager_cli(value: str | None) -> Path:
@@ -44,8 +56,8 @@ def run(manager_cli: Path, args: list[str], data_dir: Path | None) -> None:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Install RagnaCustomsApi through RagnaModManager.")
-    parser.add_argument("--package", default=str(DEFAULT_PACKAGE), help="Path to RagnaCustomsApi.rmod.")
+    parser = argparse.ArgumentParser(description="Install a RagnaCustoms managed package through RagnaModManager.")
+    parser.add_argument("--package", default=str(DEFAULT_PACKAGE), help="Path to a managed .rmod package.")
     parser.add_argument("--manager-cli", default=None, help="Path to the RagnaModManager CLI executable.")
     parser.add_argument("--game-dir", default=None, help="Optional Ragnarock game directory to save before deploy.")
     parser.add_argument(
@@ -67,13 +79,14 @@ def main() -> int:
         package = ROOT / package
     if not package.exists():
         raise SystemExit(f"Package does not exist: {package}")
+    mod_id = read_package_mod_id(package)
 
     data_dir = Path(args.data_dir).expanduser() if args.data_dir else None
     if args.game_dir:
         run(manager_cli, ["set-game", args.game_dir], data_dir)
     run(manager_cli, ["inspect", str(package)], data_dir)
     run(manager_cli, ["import", str(package)], data_dir)
-    run(manager_cli, ["enable", MOD_ID, "--priority", str(args.priority)], data_dir)
+    run(manager_cli, ["enable", mod_id, "--priority", str(args.priority)], data_dir)
 
     deploy_args = ["deploy"]
     if args.allow_warnings:

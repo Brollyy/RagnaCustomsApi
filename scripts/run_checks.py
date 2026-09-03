@@ -15,6 +15,7 @@ OFFLINE_TESTS = (
     "tests/installed_contract.py",
     "tests/ui_contract.py",
     "tests/install_vote_contract.py",
+    "tests/install_rmod_contract.py",
     "tests/capabilities_contract.py",
     "tests/vote_endpoint_contract.py",
     "tests/vote_ui_contract.py",

@@ -106,7 +106,8 @@ def main() -> int:
     assert "import" in rmm_installer_text
     assert "enable" in rmm_installer_text
     assert "deploy" in rmm_installer_text
-    assert "ragnacustoms-api" in rmm_installer_text
+    assert "read_package_mod_id" in rmm_installer_text
+    assert "MOD_ID =" not in rmm_installer_text
     runtime_log_checker_text = RUNTIME_LOG_CHECKER.read_text()
     assert "loaded" in runtime_log_checker_text
     assert "marker_loaded" in runtime_log_checker_text

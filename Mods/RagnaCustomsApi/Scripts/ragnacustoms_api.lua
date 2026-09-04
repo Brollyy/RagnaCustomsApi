@@ -533,23 +533,27 @@ local function constructVaRestRequest()
     if type(StaticFindObject) ~= "function" or type(StaticConstructObject) ~= "function" then
         return nil, "VaRest construction is unavailable"
     end
+    local subsystem = nil
+    if type(FindFirstOf) == "function" then
+        subsystem = safeObjectCall(function()
+            return FindFirstOf("VaRestSubsystem")
+        end, nil)
+    end
+    if subsystem ~= nil then
+        local managedRequest = safeObjectCall(function()
+            return subsystem:ConstructVaRestRequest()
+        end, nil)
+        if managedRequest ~= nil then
+            return managedRequest, nil
+        end
+    end
     local class = safeObjectCall(function()
         return StaticFindObject("/Script/VaRest.VaRestRequestJSON")
     end, nil)
     if class == nil then
         return nil, "VaRest request class is unavailable"
     end
-    local outer = nil
-    if type(FindFirstOf) == "function" then
-        for _, className in ipairs({ "VaRestSubsystem", "GameInstance" }) do
-            outer = safeObjectCall(function()
-                return FindFirstOf(className)
-            end, nil)
-            if outer ~= nil then
-                break
-            end
-        end
-    end
+    local outer = subsystem
     local request = safeObjectCall(function()
         return StaticConstructObject(class, outer, 0, 0, 0, nil, false, false, nil)
     end, nil)
@@ -560,6 +564,7 @@ local function constructVaRestRequest()
 end
 
 local function defaultHttpRequest(method, url, body, callback)
+    print("[RagnaCustomsApi] vote transport stage=construct method=" .. tostring(method) .. "\n")
     local request, constructError = constructVaRestRequest()
     if request == nil then
         callback(nil, { code = "transport_unavailable", message = constructError })
@@ -569,16 +574,17 @@ local function defaultHttpRequest(method, url, body, callback)
     state.requestSerial = state.requestSerial + 1
     local requestId = state.requestSerial
     state.activeRequests[requestId] = request
-    local configured = pcall(function()
-        request:SetURL(url)
+    local configured, configuredError = pcall(function()
         request:SetVerb(method == "GET" and 0 or 2)
         request:SetContentType(2)
         if method ~= "GET" then
-            request:SetContent(body or "")
+            local requestObject = unwrapRemoteValue(request:GetRequestObject())
+            requestObject:DecodeJson(body or "{}", true)
         end
-        request:ExecuteProcessRequest()
+        request:ProcessURL(url)
     end)
     if not configured then
+        print("[RagnaCustomsApi] vote transport stage=failed error=" .. tostring(configuredError) .. "\n")
         state.activeRequests[requestId] = nil
         callback(nil, { code = "transport_start_failed", message = "VaRest could not start the request" })
         return nil
@@ -595,17 +601,21 @@ local function defaultHttpRequest(method, url, body, callback)
         end, 1)
         if responseCode > 0 then
             local content = safeObjectCall(function()
-                return tostring(unwrapRemoteValue(request:GetResponseContentAsString()) or "")
+                request:GetResponseContentAsString(true)
+                return request.ResponseContent:ToString()
             end, "")
+            print("[RagnaCustomsApi] vote transport stage=complete code=" .. tostring(responseCode)
+                .. " bytes=" .. tostring(#tostring(content)) .. "\n")
             state.activeRequests[requestId] = nil
             callback({ status = responseCode, body = content }, nil)
             return
         end
-        if (status ~= 1 and attempts > 1) or attempts >= 300 then
+        if attempts >= 300 then
+            print("[RagnaCustomsApi] vote transport stage=timeout status=" .. tostring(status) .. "\n")
             state.activeRequests[requestId] = nil
             callback(nil, {
-                code = attempts >= 300 and "timeout" or "connection_error",
-                message = attempts >= 300 and "vote request timed out" or "vote server connection failed",
+                code = "timeout",
+                message = "vote request timed out",
             })
             return
         end

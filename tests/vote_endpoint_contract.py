@@ -64,7 +64,12 @@ def main() -> int:
         "CustomApiURLs",
         "GetCustomApiURLs",
         "VaRestRequestJSON",
-        "ExecuteProcessRequest",
+        "subsystem:ConstructVaRestRequest()",
+        "GetRequestObject",
+        "unwrapRemoteValue(request:GetRequestObject())",
+        'DecodeJson(body or "{}", true)',
+        "DecodeJson",
+        "ProcessURL",
         "GetResponseCode",
         "voteGenerations",
         "vote.stale",
@@ -78,6 +83,7 @@ def main() -> int:
         assert expected in source, f"missing vote client behavior: {expected}"
     vote_section = source[source.index("local function performVoteRequest") :]
     assert "httpPost(" not in vote_section
+    assert "SetRequestObject" not in source
     assert "voteEndpointTemplate" not in source
     print("vote endpoint contract ok")
     return 0

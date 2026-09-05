@@ -51,6 +51,7 @@ local state = _G.__ragnaCustomsVoteState or {
     downvotes = 0,
     customScoresAllowed = nil,
     settingProbeQueued = false,
+    createFailedPath = nil,
     error = nil,
     pressed = { up = false, down = false },
     localTestOverride = nil,
@@ -422,7 +423,9 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
 end
 
 local function makeCountLabel(canvas, label, geometry, styleSource)
-    local text = construct("/Script/UMG.TextBlock", nil)
+    -- Keep the TextBlock owned by the target canvas.  A nil outer can produce
+    -- an apparently valid transient object which fails AddToCanvas later.
+    local text = construct("/Script/UMG.TextBlock", canvas)
     if not valid(text) then
         return nil
     end
@@ -914,6 +917,11 @@ local function poll()
         log("info", "found active " .. tostring(mode) .. " Results panel")
     end
     local path = rootPath(panelName)
+    -- Do not repeatedly allocate/remove widgets after a construction failure:
+    -- the Results screen polls every second and that loop can crash the game.
+    if state.createFailedPath == path then
+        return
+    end
     if state.widgets == nil or state.panelPath ~= path then
         if state.createQueued then
             return
@@ -922,7 +930,12 @@ local function poll()
         local function createOnGameThread()
             if valid(panel) then
                 removeWidgets()
-                createWidgets(panel, path, mode)
+                local created = createWidgets(panel, path, mode)
+                if not created then
+                    state.createFailedPath = path
+                else
+                    state.createFailedPath = nil
+                end
             end
             state.createQueued = false
         end

@@ -404,10 +404,10 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
     }) then return nil end
     safeCall(function() text:SetJustification(1) end, nil)
     safeCall(function() text:SetVerticalAlignment(1) end, nil)
-    safeCall(function()
-        local font = styleSource and styleSource:GetFont() or nil
-        if valid(font) then text:SetFont(font) end
-    end, nil)
+    -- Do not copy the stock widget's font object: on some builds it is a
+    -- transient Slate value that makes a newly-constructed TextBlock blank.
+    -- The engine default font is stable for both Flat and VR.
+    safeCall(function() text:SetFontSize(26) end, nil)
     safeCall(function() text:SetRenderOpacity(1.0) end, nil)
     safeCall(function() text:SetMinDesiredWidth(54.0) end, nil)
     safeCall(function() text:ForceVolatile(true) end, nil)
@@ -434,10 +434,7 @@ local function makeCountLabel(canvas, label, geometry, styleSource)
     end
     safeCall(function() text:SetJustification(1) end, nil)
     safeCall(function() text:SetVerticalAlignment(1) end, nil)
-    safeCall(function()
-        local font = styleSource and styleSource:GetFont() or nil
-        if valid(font) then text:SetFont(font) end
-    end, nil)
+    safeCall(function() text:SetFontSize(22) end, nil)
     safeCall(function() text:SetRenderOpacity(1.0) end, nil)
     safeCall(function() text:SetMinDesiredWidth(54.0) end, nil)
     safeCall(function() text:ForceVolatile(true) end, nil)

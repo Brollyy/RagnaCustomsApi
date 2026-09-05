@@ -762,12 +762,25 @@ local function poll()
         return
     end
     state.customScoresAllowed = customScoreSendingAllowed()
+    if state.customScoresAllowed ~= state.lastLoggedCustomScoresAllowed then
+        state.lastLoggedCustomScoresAllowed = state.customScoresAllowed
+        log("info", "custom score sending allowed=" .. tostring(state.customScoresAllowed))
+    end
     if panel == nil or state.custom ~= true or state.beatmap == nil or state.customScoresAllowed ~= true then
+        local reason = panel == nil and "no_results_panel"
+            or state.custom ~= true and "song_not_custom"
+            or state.beatmap == nil and "beatmap_unresolved"
+            or "custom_score_sending_disabled"
+        if reason ~= state.lastSuppressionReason then
+            state.lastSuppressionReason = reason
+            log("info", "vote panel suppressed reason=" .. reason)
+        end
         if state.widgets ~= nil and panel == nil then
             removeWidgets()
         end
         return
     end
+    state.lastSuppressionReason = nil
     if not state.diagnostics.panelFound then
         state.diagnostics.panelFound = true
         log("info", "found active " .. tostring(mode) .. " Results panel")

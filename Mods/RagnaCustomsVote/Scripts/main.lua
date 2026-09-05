@@ -266,6 +266,9 @@ local function addToCanvas(canvas, widget, geometry)
     end
     safeCall(function()
         slot:SetAutoSize(false)
+        if geometry.anchorRight then
+            slot:SetAnchors({ Minimum = { X = 1.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 0.0 } })
+        end
         slot:SetPosition({ X = geometry.x, Y = geometry.y })
         slot:SetSize({ X = geometry.width, Y = geometry.height })
         slot:SetZOrder(geometry.z or 9000)
@@ -575,9 +578,8 @@ local function createWidgets(panel, panelPath, mode)
         end
         return false
     end
-    local geometry = mode == "vr"
-        and { x = 700, y = 400, width = 120, height = 46 }
-        or { x = 700, y = 400, width = 120, height = 46 }
+    -- Right-anchored offsets survive the game's letterboxed/VR viewport scale.
+    local geometry = { x = -130, y = 260, width = 120, height = 46, anchorRight = true }
     local container = construct("/Script/UMG.CanvasPanel", canvas)
     log("info", "vote panel construct container begin")
     if not valid(container) or not addToCanvas(canvas, container, geometry) then

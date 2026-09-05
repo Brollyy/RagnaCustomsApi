@@ -249,8 +249,6 @@ local function setText(widget, value)
         return true
     end, false)
     if applied then
-        safeCall(function() widget:SynchronizeProperties() end, nil)
-        safeCall(function() widget:InvalidateLayoutAndVolatility() end, nil)
         return true
     end
     return safeCall(function()
@@ -342,7 +340,9 @@ local function makeButton(canvas, context, mode, label, geometry)
     local classPath = mode == "vr"
         and "/Game/VRKeyboards/Blueprints/Keyboards/BasicPointAndClick/WBP_Button_Basic.WBP_Button_Basic_C"
         or "/Game/Flat/Blueprints/UI/InGame/FlatInGameButton.FlatInGameButton_C"
+    log("info", "vote button create begin label=" .. tostring(label))
     local root = createUserWidget(classPath, context)
+    log("info", "vote button create done label=" .. tostring(label))
     if not valid(root) then
         return nil
     end
@@ -350,21 +350,10 @@ local function makeButton(canvas, context, mode, label, geometry)
     local childOk, child = pcall(function()
         return root:GetPropertyValue(textProperty)
     end)
-    if not childOk or not valid(child) or not setText(child, label) then
-        log("error", "failed to label stock Results button label=" .. tostring(label))
-    end
-    -- FlatInGameButton has a large baked internal layout and does not visually
-    -- honor a small CanvasSlot by itself. Scale each root around its top-left
-    -- pivot so adjacent vote controls remain separate.
-    safeCall(function()
-        -- Keep the stock widget only as an input surface. Its baked skin is
-        -- hidden because it cannot be resized cleanly at this panel scale.
-        root:SetRenderTransformPivot({ X = 0.0, Y = 0.0 })
-        root:SetRenderScale({ X = 0.25, Y = 0.5 })
-        -- The stock widget is an input-only hit target. Its baked skin and
-        -- label are hidden; the aligned mod-owned surface is drawn above it.
-        root:SetRenderOpacity(0.0)
-    end, nil)
+    log("info", "vote button child resolved label=" .. tostring(label))
+    -- The stock child is intentionally never mutated. Calling SetText on this
+    -- blueprint's transient label can block the Results construction thread;
+    -- visible labels are supplied by the mod-owned TextBlocks below.
     if not addToCanvas(canvas, root, geometry) then
         log("error", "failed to attach Results button widget label=" .. tostring(label))
         return nil
@@ -470,14 +459,13 @@ local function render()
     if widgets == nil then
         return
     end
-    setText(widgets.up.text, "▲")
-    setText(widgets.down.text, "▼")
+    -- Stock hit-target labels are intentionally untouched.
     local upColor = state.currentVote == "up" and COLORS.up or COLORS.normal
     local downColor = state.currentVote == "down" and COLORS.down or COLORS.normal
     safeCall(function() widgets.up.button:SetColorAndOpacity(upColor) end, nil)
     safeCall(function() widgets.down.button:SetColorAndOpacity(downColor) end, nil)
-    setText(widgets.upVisual.text, "▲")
-    setText(widgets.downVisual.text, "▼")
+    setText(widgets.upVisual.text, "^")
+    setText(widgets.downVisual.text, "v")
     setText(widgets.upCount, tostring(state.upvotes or 0))
     setText(widgets.downCount, tostring(state.downvotes or 0))
     setColor(widgets.upVisual.surface, upColor)
@@ -634,14 +622,17 @@ local function createWidgets(panel, panelPath, mode)
         background = nil
     end
     log("info", "vote panel construct up begin")
-    local up = makeButton(container, panel, mode, "▲", { x = 6, y = 7, width = 42, height = 42, z = 2 })
+    local up = makeButton(container, panel, mode, "", { x = 6, y = 7, width = 42, height = 42, z = 2 })
     log("info", "vote panel construct up done")
-    local down = makeButton(container, panel, mode, "▼", { x = 6, y = 63, width = 42, height = 42, z = 2 })
+    local down = makeButton(container, panel, mode, "", { x = 6, y = 63, width = 42, height = 42, z = 2 })
     log("info", "vote panel construct down done")
     -- Draw visuals above the stock widgets; SelfHitTestInvisible keeps the
     -- transparent stock widgets as the input surfaces.
-    local upVisual = makeVisualButton(container, "▲", { x = 6, y = 7, width = 42, height = 42, z = 3 }, up.text)
-    local downVisual = makeVisualButton(container, "▼", { x = 6, y = 63, width = 42, height = 42, z = 3 }, down.text)
+    log("info", "vote visual construct up begin")
+    local upVisual = makeVisualButton(container, "^", { x = 6, y = 7, width = 42, height = 42, z = 3 }, up.text)
+    log("info", "vote visual construct up done")
+    local downVisual = makeVisualButton(container, "v", { x = 6, y = 63, width = 42, height = 42, z = 3 }, down.text)
+    log("info", "vote visual construct down done")
     local upCount = makeCountLabel(container, "0", { x = 52, y = 7, width = 48, height = 42, z = 1 }, up.text)
     local downCount = makeCountLabel(container, "0", { x = 52, y = 63, width = 48, height = 42, z = 1 }, down.text)
     if up == nil or down == nil or upVisual == nil or downVisual == nil or upCount == nil or downCount == nil then

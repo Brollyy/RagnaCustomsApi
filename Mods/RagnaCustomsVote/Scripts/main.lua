@@ -520,8 +520,8 @@ local function createWidgets(panel, panelPath, mode)
         return false
     end
     local geometry = mode == "vr"
-        and { x = 1200, y = 460, width = 120, height = 46 }
-        or { x = 1200, y = 460, width = 120, height = 46 }
+        and { x = 900, y = 400, width = 120, height = 46 }
+        or { x = 900, y = 400, width = 120, height = 46 }
     local container = construct("/Script/UMG.CanvasPanel", canvas)
     log("info", "vote panel construct container begin")
     if not valid(container) or not addToCanvas(canvas, container, geometry) then

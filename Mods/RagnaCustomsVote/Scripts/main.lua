@@ -520,8 +520,8 @@ local function createWidgets(panel, panelPath, mode)
         return false
     end
     local geometry = mode == "vr"
-        and { x = 500, y = 300, width = 190, height = 54 }
-        or { x = 700, y = 520, width = 190, height = 54 }
+        and { x = 350, y = 270, width = 120, height = 46 }
+        or { x = 340, y = 230, width = 120, height = 46 }
     local container = construct("/Script/UMG.CanvasPanel", canvas)
     if not valid(container) or not addToCanvas(canvas, container, geometry) then
         if not state.diagnostics.containerFailed then
@@ -531,15 +531,15 @@ local function createWidgets(panel, panelPath, mode)
         return false
     end
     local background = construct("/Script/UMG.Border", container)
-    if valid(background) and addToCanvas(container, background, { x = 0, y = 0, width = 190, height = 54, z = 0 }) then
+    if valid(background) and addToCanvas(container, background, { x = 0, y = 0, width = 120, height = 46, z = 0 }) then
         setColor(background, { R = 0.04, G = 0.03, B = 0.05, A = 0.88 })
     else
         background = nil
     end
-    local up = makeButton(container, panel, mode, "▲", { x = 6, y = 6, width = 42, height = 42, z = 2 })
-    local down = makeButton(container, panel, mode, "▼", { x = 100, y = 6, width = 42, height = 42, z = 2 })
-    local upCount = makeCount(container, "0", { x = 52, y = 12, width = 40, height = 30, z = 2 })
-    local downCount = makeCount(container, "0", { x = 146, y = 12, width = 40, height = 30, z = 2 })
+    local up = makeButton(container, panel, mode, "▲", { x = 4, y = 4, width = 30, height = 38, z = 2 })
+    local down = makeButton(container, panel, mode, "▼", { x = 66, y = 4, width = 30, height = 38, z = 2 })
+    local upCount = makeCount(container, "0", { x = 38, y = 10, width = 22, height = 26, z = 2 })
+    local downCount = makeCount(container, "0", { x = 100, y = 10, width = 22, height = 26, z = 2 })
     if up == nil or down == nil or upCount == nil or downCount == nil then
         if not state.diagnostics.buttonsFailed then
             state.diagnostics.buttonsFailed = true

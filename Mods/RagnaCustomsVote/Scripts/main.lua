@@ -347,7 +347,9 @@ local function makeButton(canvas, context, mode, label, geometry)
         -- hidden because it cannot be resized cleanly at this panel scale.
         root:SetRenderTransformPivot({ X = 0.0, Y = 0.0 })
         root:SetRenderScale({ X = 0.25, Y = 0.5 })
-        root:SetRenderOpacity(0.0)
+        -- Keep the stock label layer visible; scaling prevents its baked
+        -- background from overlapping the adjacent control.
+        root:SetRenderOpacity(1.0)
     end, nil)
     if not addToCanvas(canvas, root, geometry) then
         log("error", "failed to attach Results button widget label=" .. tostring(label))

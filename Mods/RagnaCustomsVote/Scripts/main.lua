@@ -345,6 +345,8 @@ local function makeButton(canvas, context, mode, label, geometry)
     safeCall(function()
         -- Keep the stock widget only as an input surface. Its baked skin is
         -- hidden because it cannot be resized cleanly at this panel scale.
+        root:SetRenderTransformPivot({ X = 0.0, Y = 0.0 })
+        root:SetRenderScale({ X = 0.25, Y = 0.5 })
         root:SetRenderOpacity(0.0)
     end, nil)
     if not addToCanvas(canvas, root, geometry) then

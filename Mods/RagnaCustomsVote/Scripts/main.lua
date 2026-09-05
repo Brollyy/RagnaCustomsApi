@@ -385,8 +385,8 @@ local function makeVisualButton(canvas, label, geometry)
     end
     safeCall(function() text:SetJustification(1) end, nil)
     -- Visual layers must not intercept the invisible stock button hit targets.
-    safeCall(function() surface:SetVisibility(4) end, nil) -- SelfHitTestInvisible
-    safeCall(function() text:SetVisibility(4) end, nil)
+    safeCall(function() surface:SetVisibility(3) end, nil) -- HitTestInvisible
+    safeCall(function() text:SetVisibility(3) end, nil)
     setColor(surface, COLORS.normal)
     setColor(text, { R = 1.0, G = 1.0, B = 1.0, A = 1.0 })
     return { root = surface, surface = surface, text = text }

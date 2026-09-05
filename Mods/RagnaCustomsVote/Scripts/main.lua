@@ -50,6 +50,7 @@ local state = _G.__ragnaCustomsVoteState or {
     upvotes = 0,
     downvotes = 0,
     customScoresAllowed = nil,
+    settingProbeQueued = false,
     error = nil,
     pressed = { up = false, down = false },
     localTestOverride = nil,
@@ -829,8 +830,23 @@ local function poll()
     -- when a new Results panel instance is observed.
     local panelPathForProbe = panel ~= nil and rootPath(panelName) or nil
     if state.customScoresAllowed == nil or (panelPathForProbe ~= nil and state.lastSettingPanelPath ~= panelPathForProbe) then
-        state.customScoresAllowed = customScoreSendingAllowed()
-        state.lastSettingPanelPath = panelPathForProbe
+        -- Reflection against GameInstance/SaveGame is a game-thread operation.
+        -- Never perform it directly from LoopAsync's worker callback: doing so
+        -- can stall the menu while the song selector is constructing its list.
+        if not state.settingProbeQueued then
+            state.settingProbeQueued = true
+            local function probeOnGameThread()
+                state.customScoresAllowed = customScoreSendingAllowed()
+                state.lastSettingPanelPath = panelPathForProbe
+                state.settingProbeQueued = false
+            end
+            if type(ExecuteInGameThread) == "function" then
+                ExecuteInGameThread(probeOnGameThread)
+            else
+                probeOnGameThread()
+            end
+        end
+        return
     end
     if state.customScoresAllowed ~= state.lastLoggedCustomScoresAllowed then
         state.lastLoggedCustomScoresAllowed = state.customScoresAllowed

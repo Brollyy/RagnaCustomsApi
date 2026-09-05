@@ -761,7 +761,14 @@ local function poll()
         end
         return
     end
-    state.customScoresAllowed = customScoreSendingAllowed()
+    -- Reflected GameInstance getters are game-thread calls. Do not invoke them
+    -- on every 500 ms poll during gameplay; probe once initially and again only
+    -- when a new Results panel instance is observed.
+    local panelPathForProbe = panel ~= nil and rootPath(panelName) or nil
+    if state.customScoresAllowed == nil or (panelPathForProbe ~= nil and state.lastSettingPanelPath ~= panelPathForProbe) then
+        state.customScoresAllowed = customScoreSendingAllowed()
+        state.lastSettingPanelPath = panelPathForProbe
+    end
     if state.customScoresAllowed ~= state.lastLoggedCustomScoresAllowed then
         state.lastLoggedCustomScoresAllowed = state.customScoresAllowed
         log("info", "custom score sending allowed=" .. tostring(state.customScoresAllowed))

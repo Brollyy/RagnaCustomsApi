@@ -49,6 +49,8 @@ def main() -> int:
         "numeric <= 4294967295",
         'objectName:find("/Engine/Transient.", 1, true)',
         'managerName:find("/Engine/Transient.", 1, true)',
+        "Reflected GameInstance getters are game-thread calls",
+        "state.lastSettingPanelPath ~= panelPathForProbe",
     ]:
         assert expected in source, f"missing Results UI behavior: {expected}"
     assert "OnClicked:Add" not in source

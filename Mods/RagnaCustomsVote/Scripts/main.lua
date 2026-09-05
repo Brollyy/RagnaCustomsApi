@@ -381,8 +381,11 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
     if not setText(text, label) then
         return nil
     end
-    local attached = safeCall(function() return surface:AddChild(text) end, nil)
-    if not valid(attached) then return nil end
+    if not addToCanvas(canvas, text, {
+        x = geometry.x + 2, y = geometry.y + 2,
+        width = geometry.width - 4, height = geometry.height - 4,
+        z = (geometry.z or 2) + 10,
+    }) then return nil end
     safeCall(function() text:SetJustification(1) end, nil)
     safeCall(function() text:SetVerticalAlignment(1) end, nil)
     safeCall(function()

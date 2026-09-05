@@ -392,10 +392,10 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
     safeCall(function() text:SetRenderOpacity(1.0) end, nil)
     -- Visual layers must not intercept the invisible stock button hit targets.
     safeCall(function() surface:SetVisibility(3) end, nil) -- HitTestInvisible
-    safeCall(function() text:SetVisibility(3) end, nil)
+    safeCall(function() text:SetVisibility(0) end, nil) -- Visible; parent is hit-test-invisible
     setColor(surface, COLORS.normal)
     safeCall(function() surface:SetRenderOpacity(0.22) end, nil)
-    setColor(text, { R = 0.08, G = 0.06, B = 0.10, A = 1.0 })
+    setColor(text, { R = 1.0, G = 1.0, B = 1.0, A = 1.0 })
     return { root = surface, surface = surface, text = text }
 end
 
@@ -436,10 +436,10 @@ local function render()
     setColor(widgets.downVisual.surface, downColor)
     setColor(widgets.upVisual.text, state.currentVote == "up"
         and { R = 0.02, G = 0.16, B = 0.04, A = 1.0 }
-        or { R = 0.08, G = 0.06, B = 0.10, A = 1.0 })
+        or { R = 1.0, G = 1.0, B = 1.0, A = 1.0 })
     setColor(widgets.downVisual.text, state.currentVote == "down"
         and { R = 0.20, G = 0.02, B = 0.02, A = 1.0 }
-        or { R = 0.08, G = 0.06, B = 0.10, A = 1.0 })
+        or { R = 1.0, G = 1.0, B = 1.0, A = 1.0 })
     local enabled = state.phase == "ready" or state.phase == "error"
     safeCall(function()
         widgets.up.button:SetIsEnabled(enabled)

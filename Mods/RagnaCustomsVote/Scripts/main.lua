@@ -341,7 +341,7 @@ local function makeButton(canvas, context, mode, label, geometry)
     -- pivot so adjacent vote controls remain separate.
     safeCall(function()
         root:SetRenderTransformPivot({ X = 0.0, Y = 0.0 })
-        root:SetRenderScale({ X = 0.25, Y = 0.25 })
+        root:SetRenderScale({ X = 0.25, Y = 0.5 })
     end, nil)
     if not addToCanvas(canvas, root, geometry) then
         log("error", "failed to attach Results button widget label=" .. tostring(label))
@@ -374,14 +374,6 @@ local function removeWidgets()
     state.pressed = { up = false, down = false }
 end
 
-local function makeCount(canvas, label, geometry)
-    local text = construct("/Script/UMG.TextBlock", canvas)
-    if not valid(text) or not setText(text, label) or not addToCanvas(canvas, text, geometry) then
-        return nil
-    end
-    return text
-end
-
 local COLORS = {
     normal = { R = 0.82, G = 0.86, B = 0.92, A = 1.0 },
     up = { R = 0.25, G = 1.0, B = 0.42, A = 1.0 },
@@ -394,10 +386,8 @@ local function render()
     if widgets == nil then
         return
     end
-    setText(widgets.up.text, "▲")
-    setText(widgets.down.text, "▼")
-    setText(widgets.upCount, tostring(state.upvotes or 0))
-    setText(widgets.downCount, tostring(state.downvotes or 0))
+    setText(widgets.up.text, "▲ " .. tostring(state.upvotes or 0))
+    setText(widgets.down.text, "▼ " .. tostring(state.downvotes or 0))
     safeCall(function() widgets.up.button:SetColorAndOpacity(state.currentVote == "up" and COLORS.up or COLORS.normal) end, nil)
     safeCall(function() widgets.down.button:SetColorAndOpacity(state.currentVote == "down" and COLORS.down or COLORS.normal) end, nil)
     local enabled = state.phase == "ready" or state.phase == "error"
@@ -546,15 +536,11 @@ local function createWidgets(panel, panelPath, mode)
         background = nil
     end
     log("info", "vote panel construct up begin")
-    local up = makeButton(container, panel, mode, "▲", { x = 0, y = 0, width = 58, height = 46, z = 2 })
+    local up = makeButton(container, panel, mode, "▲ 0", { x = 0, y = 0, width = 58, height = 46, z = 2 })
     log("info", "vote panel construct up done")
-    local down = makeButton(container, panel, mode, "▼", { x = 60, y = 0, width = 58, height = 46, z = 2 })
+    local down = makeButton(container, panel, mode, "▼ 0", { x = 60, y = 0, width = 58, height = 46, z = 2 })
     log("info", "vote panel construct down done")
-    local upCount = makeCount(container, "0", { x = 48, y = 10, width = 12, height = 26, z = 3 })
-    log("info", "vote panel construct up count done")
-    local downCount = makeCount(container, "0", { x = 108, y = 10, width = 12, height = 26, z = 3 })
-    log("info", "vote panel construct down count done")
-    if up == nil or down == nil or upCount == nil or downCount == nil then
+    if up == nil or down == nil then
         if not state.diagnostics.buttonsFailed then
             state.diagnostics.buttonsFailed = true
             log("error", "failed to construct or attach Results vote buttons")
@@ -574,8 +560,6 @@ local function createWidgets(panel, panelPath, mode)
         status = nil,
         up = up,
         down = down,
-        upCount = upCount,
-        downCount = downCount,
     }
     state.panelPath = panelPath
     state.mode = mode

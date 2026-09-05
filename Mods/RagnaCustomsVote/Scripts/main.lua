@@ -252,6 +252,9 @@ local function setColor(widget, color)
     safeCall(function()
         widget:SetBackgroundColor(color)
     end, nil)
+    safeCall(function()
+        widget:SetBrushColor(color)
+    end, nil)
 end
 
 local function addToCanvas(canvas, widget, geometry)
@@ -340,8 +343,9 @@ local function makeButton(canvas, context, mode, label, geometry)
     -- honor a small CanvasSlot by itself. Scale each root around its top-left
     -- pivot so adjacent vote controls remain separate.
     safeCall(function()
-        root:SetRenderTransformPivot({ X = 0.0, Y = 0.0 })
-        root:SetRenderScale({ X = 0.25, Y = 0.5 })
+        -- Keep the stock widget only as an input surface. Its baked skin is
+        -- hidden because it cannot be resized cleanly at this panel scale.
+        root:SetRenderOpacity(0.0)
     end, nil)
     if not addToCanvas(canvas, root, geometry) then
         log("error", "failed to attach Results button widget label=" .. tostring(label))
@@ -356,15 +360,49 @@ local function makeButton(canvas, context, mode, label, geometry)
     }
 end
 
+local COLORS = {
+    normal = { R = 0.82, G = 0.86, B = 0.92, A = 1.0 },
+    up = { R = 0.25, G = 1.0, B = 0.42, A = 1.0 },
+    down = { R = 1.0, G = 0.32, B = 0.32, A = 1.0 },
+    disabled = { R = 0.52, G = 0.56, B = 0.62, A = 1.0 },
+}
+
+local function makeVisualButton(canvas, label, geometry)
+    local surface = construct("/Script/UMG.Border", canvas)
+    local text = construct("/Script/UMG.TextBlock", canvas)
+    if not valid(surface) or not valid(text) then
+        return nil
+    end
+    if not addToCanvas(canvas, surface, geometry) then
+        return nil
+    end
+    if not setText(text, label) or not addToCanvas(canvas, text, {
+        x = geometry.x + 2, y = geometry.y + 2,
+        width = geometry.width - 4, height = geometry.height - 4,
+        z = (geometry.z or 2) + 1,
+    }) then
+        return nil
+    end
+    safeCall(function() text:SetJustification(1) end, nil)
+    -- Visual layers must not intercept the invisible stock button hit targets.
+    safeCall(function() surface:SetVisibility(4) end, nil) -- SelfHitTestInvisible
+    safeCall(function() text:SetVisibility(4) end, nil)
+    setColor(surface, COLORS.normal)
+    setColor(text, { R = 1.0, G = 1.0, B = 1.0, A = 1.0 })
+    return { root = surface, surface = surface, text = text }
+end
+
 local function removeWidgets()
     local widgets = state.widgets
     if widgets ~= nil then
         for _, entry in pairs(widgets) do
-            local widget = type(entry) == "table" and (entry.root or entry.button or entry.text) or entry
-            if valid(widget) then
-                safeCall(function()
-                    widget:RemoveFromParent()
-                end, nil)
+            local candidates = type(entry) == "table"
+                and { entry.root, entry.button, entry.surface, entry.text }
+                or { entry }
+            for _, widget in ipairs(candidates) do
+                if valid(widget) then
+                    safeCall(function() widget:RemoveFromParent() end, nil)
+                end
             end
         end
     end
@@ -374,13 +412,6 @@ local function removeWidgets()
     state.pressed = { up = false, down = false }
 end
 
-local COLORS = {
-    normal = { R = 0.82, G = 0.86, B = 0.92, A = 1.0 },
-    up = { R = 0.25, G = 1.0, B = 0.42, A = 1.0 },
-    down = { R = 1.0, G = 0.32, B = 0.32, A = 1.0 },
-    disabled = { R = 0.52, G = 0.56, B = 0.62, A = 1.0 },
-}
-
 local function render()
     local widgets = state.widgets
     if widgets == nil then
@@ -388,8 +419,14 @@ local function render()
     end
     setText(widgets.up.text, "▲ " .. tostring(state.upvotes or 0))
     setText(widgets.down.text, "▼ " .. tostring(state.downvotes or 0))
-    safeCall(function() widgets.up.button:SetColorAndOpacity(state.currentVote == "up" and COLORS.up or COLORS.normal) end, nil)
-    safeCall(function() widgets.down.button:SetColorAndOpacity(state.currentVote == "down" and COLORS.down or COLORS.normal) end, nil)
+    local upColor = state.currentVote == "up" and COLORS.up or COLORS.normal
+    local downColor = state.currentVote == "down" and COLORS.down or COLORS.normal
+    safeCall(function() widgets.up.button:SetColorAndOpacity(upColor) end, nil)
+    safeCall(function() widgets.down.button:SetColorAndOpacity(downColor) end, nil)
+    setText(widgets.upVisual.text, "▲ " .. tostring(state.upvotes or 0))
+    setText(widgets.downVisual.text, "▼ " .. tostring(state.downvotes or 0))
+    setColor(widgets.upVisual.surface, upColor)
+    setColor(widgets.downVisual.surface, downColor)
     local enabled = state.phase == "ready" or state.phase == "error"
     safeCall(function()
         widgets.up.button:SetIsEnabled(enabled)
@@ -540,7 +577,11 @@ local function createWidgets(panel, panelPath, mode)
     log("info", "vote panel construct up done")
     local down = makeButton(container, panel, mode, "▼ 0", { x = 60, y = 0, width = 58, height = 46, z = 2 })
     log("info", "vote panel construct down done")
-    if up == nil or down == nil then
+    -- Draw visuals above the stock widgets; SelfHitTestInvisible keeps the
+    -- transparent stock widgets as the input surfaces.
+    local upVisual = makeVisualButton(container, "▲ 0", { x = 0, y = 0, width = 58, height = 46, z = 3 })
+    local downVisual = makeVisualButton(container, "▼ 0", { x = 60, y = 0, width = 58, height = 46, z = 3 })
+    if up == nil or down == nil or upVisual == nil or downVisual == nil then
         if not state.diagnostics.buttonsFailed then
             state.diagnostics.buttonsFailed = true
             log("error", "failed to construct or attach Results vote buttons")
@@ -560,6 +601,8 @@ local function createWidgets(panel, panelPath, mode)
         status = nil,
         up = up,
         down = down,
+        upVisual = upVisual,
+        downVisual = downVisual,
     }
     state.panelPath = panelPath
     state.mode = mode

@@ -383,14 +383,14 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
     if not addToCanvas(canvas, surface, geometry) then
         return nil
     end
-    if not setText(text, label) then
-        return nil
-    end
     if not addToCanvas(canvas, text, {
         x = geometry.x + 2, y = geometry.y + 2,
         width = geometry.width - 4, height = geometry.height - 4,
         z = 1,
     }) then return nil end
+    if not setText(text, label) then
+        return nil
+    end
     safeCall(function() text:SetJustification(1) end, nil)
     safeCall(function() text:SetVerticalAlignment(1) end, nil)
     -- Do not copy the stock widget's font object: on some builds it is a
@@ -415,10 +415,13 @@ end
 
 local function makeCountLabel(canvas, label, geometry, styleSource)
     local text = construct("/Script/UMG.TextBlock", canvas)
-    if not valid(text) or not setText(text, label) then
+    if not valid(text) then
         return nil
     end
     if not addToCanvas(canvas, text, geometry) then
+        return nil
+    end
+    if not setText(text, label) then
         return nil
     end
     safeCall(function() text:SetJustification(1) end, nil)

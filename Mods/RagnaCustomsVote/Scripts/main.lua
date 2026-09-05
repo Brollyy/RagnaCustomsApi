@@ -145,8 +145,8 @@ end
 local function customScoreSendingAllowed()
     if type(FindFirstOf) ~= "function" then return false end
     local classes = { "RagnarockGameInstance", "RagnarockGameInstance_C", "BP_GameInstance_Retail_C", "GameInstance_C", "RRGameInstance", "RRGameInstance_C", "RagnarockSaveGameSubsystem" }
-    local methods = { "GetAllowSendingCustomSongScores", "GetAllowSendCustomSongScores", "GetAllowCustomSongScores", "GetAllowCustomScores", "GetAllowCustomSongs", "IsAllowSendingCustomSongScores", "IsCustomSongScoreSendingAllowed" }
-    local properties = { "AllowSendingCustomSongScores", "AllowSendCustomSongScores", "AllowCustomSongScores", "AllowCustomScores", "AllowCustomSongs", "bAllowSendingCustomSongScores", "bAllowCustomSongScores" }
+    local methods = { "GetAllowSendingCustomSongScores", "GetAllowSendCustomSongScores", "GetAllowCustomSongScores", "GetAllowCustomScores", "IsAllowSendingCustomSongScores", "IsCustomSongScoreSendingAllowed" }
+    local properties = { "AllowSendingCustomSongScores", "AllowSendCustomSongScores", "AllowCustomSongScores", "AllowCustomScores", "bAllowSendingCustomSongScores", "bAllowCustomSongScores" }
     for _, className in ipairs(classes) do
         local object = safeCall(function() return FindFirstOf(className) end, nil)
         if valid(object) then

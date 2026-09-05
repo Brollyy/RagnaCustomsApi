@@ -49,6 +49,7 @@ local state = _G.__ragnaCustomsVoteState or {
     currentVote = nil,
     upvotes = 0,
     downvotes = 0,
+    customScoresAllowed = nil,
     error = nil,
     pressed = { up = false, down = false },
     localTestOverride = nil,
@@ -129,6 +130,37 @@ local function visible(object)
     return valid(object) and safeCall(function()
         return object:IsVisible()
     end, true)
+end
+
+local function asBoolean(value)
+    value = unwrap(value)
+    if type(value) == "boolean" then return value end
+    if type(value) == "number" then return value ~= 0 end
+    local text = string.lower(tostring(value or ""))
+    if text == "true" or text == "1" then return true end
+    if text == "false" or text == "0" then return false end
+    return nil
+end
+
+local function customScoreSendingAllowed()
+    if type(FindFirstOf) ~= "function" then return false end
+    local classes = { "RagnarockGameInstance", "RagnarockGameInstance_C", "RRGameInstance", "RRGameInstance_C", "RagnarockSaveGameSubsystem" }
+    local methods = { "GetAllowSendingCustomSongScores", "GetAllowSendCustomSongScores", "GetAllowCustomSongScores", "GetAllowCustomScores", "IsAllowSendingCustomSongScores", "IsCustomSongScoreSendingAllowed" }
+    local properties = { "AllowSendingCustomSongScores", "AllowSendCustomSongScores", "AllowCustomSongScores", "AllowCustomScores", "bAllowSendingCustomSongScores" }
+    for _, className in ipairs(classes) do
+        local object = safeCall(function() return FindFirstOf(className) end, nil)
+        if valid(object) then
+            for _, method in ipairs(methods) do
+                local result = asBoolean(safeCall(function() return object[method](object) end, nil))
+                if result ~= nil then return result end
+            end
+            for _, property in ipairs(properties) do
+                local result = asBoolean(safeCall(function() return object:GetPropertyValue(property) end, nil))
+                if result ~= nil then return result end
+            end
+        end
+    end
+    return false
 end
 
 local function findActiveResultsPanel()
@@ -332,6 +364,14 @@ local function removeWidgets()
     state.pressed = { up = false, down = false }
 end
 
+local function makeCount(canvas, label, geometry)
+    local text = construct("/Script/UMG.TextBlock", canvas)
+    if not valid(text) or not setText(text, label) or not addToCanvas(canvas, text, geometry) then
+        return nil
+    end
+    return text
+end
+
 local COLORS = {
     normal = { R = 0.82, G = 0.86, B = 0.92, A = 1.0 },
     up = { R = 0.25, G = 1.0, B = 0.42, A = 1.0 },
@@ -344,15 +384,12 @@ local function render()
     if widgets == nil then
         return
     end
-    local upLabel = string.format("UP  %d", tonumber(state.upvotes) or 0)
-    local downLabel = string.format("DOWN  %d", tonumber(state.downvotes) or 0)
-    if state.currentVote == "up" then
-        upLabel = upLabel .. "  SELECTED"
-    elseif state.currentVote == "down" then
-        downLabel = downLabel .. "  SELECTED"
-    end
-    setText(widgets.up.text, upLabel)
-    setText(widgets.down.text, downLabel)
+    setText(widgets.up.text, "▲")
+    setText(widgets.down.text, "▼")
+    setText(widgets.upCount, tostring(state.upvotes or 0))
+    setText(widgets.downCount, tostring(state.downvotes or 0))
+    safeCall(function() widgets.up.button:SetColorAndOpacity(state.currentVote == "up" and COLORS.up or COLORS.normal) end, nil)
+    safeCall(function() widgets.down.button:SetColorAndOpacity(state.currentVote == "down" and COLORS.down or COLORS.normal) end, nil)
     local enabled = state.phase == "ready" or state.phase == "error"
     safeCall(function()
         widgets.up.button:SetIsEnabled(enabled)
@@ -366,7 +403,7 @@ local function render()
     elseif state.phase == "error" then
         status = "Vote unavailable - press to retry"
     end
-    setText(widgets.status.text, status)
+    if widgets.status ~= nil then setText(widgets.status.text, status) end
 end
 
 local function applyResponse(result)
@@ -480,8 +517,8 @@ local function createWidgets(panel, panelPath, mode)
         return false
     end
     local geometry = mode == "vr"
-        and { x = 30, y = 560, width = 458, height = 100 }
-        or { x = 245, y = 650, width = 458, height = 100 }
+        and { x = 500, y = 300, width = 190, height = 54 }
+        or { x = 700, y = 520, width = 190, height = 54 }
     local container = construct("/Script/UMG.CanvasPanel", canvas)
     if not valid(container) or not addToCanvas(canvas, container, geometry) then
         if not state.diagnostics.containerFailed then
@@ -491,18 +528,16 @@ local function createWidgets(panel, panelPath, mode)
         return false
     end
     local background = construct("/Script/UMG.Border", container)
-    if valid(background) and addToCanvas(container, background, { x = 0, y = 0, width = 458, height = 100, z = 0 }) then
+    if valid(background) and addToCanvas(container, background, { x = 0, y = 0, width = 190, height = 54, z = 0 }) then
         setColor(background, { R = 0.04, G = 0.03, B = 0.05, A = 0.88 })
     else
         background = nil
     end
-    local statusGeometry = { x = 12, y = 4, width = 434, height = 32, z = 2 }
-    local upGeometry = { x = 12, y = 40, width = 211, height = 50, z = 2 }
-    local downGeometry = { x = 235, y = 40, width = 211, height = 50, z = 2 }
-    local status = makeButton(container, panel, mode, "Vote for this custom song", statusGeometry)
-    local up = makeButton(container, panel, mode, "UP", upGeometry)
-    local down = makeButton(container, panel, mode, "DOWN", downGeometry)
-    if status == nil or up == nil or down == nil then
+    local up = makeButton(container, panel, mode, "▲", { x = 6, y = 6, width = 42, height = 42, z = 2 })
+    local down = makeButton(container, panel, mode, "▼", { x = 100, y = 6, width = 42, height = 42, z = 2 })
+    local upCount = makeCount(container, "0", { x = 52, y = 12, width = 40, height = 30, z = 2 })
+    local downCount = makeCount(container, "0", { x = 146, y = 12, width = 40, height = 30, z = 2 })
+    if up == nil or down == nil or upCount == nil or downCount == nil then
         if not state.diagnostics.buttonsFailed then
             state.diagnostics.buttonsFailed = true
             log("error", "failed to construct or attach Results vote buttons")
@@ -513,14 +548,17 @@ local function createWidgets(panel, panelPath, mode)
         return false
     end
     safeCall(function()
-        status.button:SetIsEnabled(false)
+        up.button:SetIsEnabled(false)
+        down.button:SetIsEnabled(false)
     end, nil)
     state.widgets = {
         container = container,
         background = background,
-        status = status,
+        status = nil,
         up = up,
         down = down,
+        upCount = upCount,
+        downCount = downCount,
     }
     state.panelPath = panelPath
     state.mode = mode
@@ -720,7 +758,8 @@ local function poll()
         end
         return
     end
-    if panel == nil or state.custom ~= true or state.beatmap == nil then
+    state.customScoresAllowed = customScoreSendingAllowed()
+    if panel == nil or state.custom ~= true or state.beatmap == nil or state.customScoresAllowed ~= true then
         if state.widgets ~= nil and panel == nil then
             removeWidgets()
         end

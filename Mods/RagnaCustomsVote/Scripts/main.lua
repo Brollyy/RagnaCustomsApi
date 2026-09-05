@@ -336,6 +336,13 @@ local function makeButton(canvas, context, mode, label, geometry)
     if not childOk or not valid(child) or not setText(child, label) then
         log("error", "failed to label stock Results button label=" .. tostring(label))
     end
+    -- FlatInGameButton has a large baked internal layout and does not visually
+    -- honor a small CanvasSlot by itself. Scale each root around its top-left
+    -- pivot so adjacent vote controls remain separate.
+    safeCall(function()
+        root:SetRenderTransformPivot({ X = 0.0, Y = 0.0 })
+        root:SetRenderScale({ X = 0.25, Y = 0.25 })
+    end, nil)
     if not addToCanvas(canvas, root, geometry) then
         log("error", "failed to attach Results button widget label=" .. tostring(label))
         return nil
@@ -539,13 +546,13 @@ local function createWidgets(panel, panelPath, mode)
         background = nil
     end
     log("info", "vote panel construct up begin")
-    local up = makeButton(container, panel, mode, "▲", { x = 4, y = 4, width = 30, height = 38, z = 2 })
+    local up = makeButton(container, panel, mode, "▲", { x = 0, y = 0, width = 58, height = 46, z = 2 })
     log("info", "vote panel construct up done")
-    local down = makeButton(container, panel, mode, "▼", { x = 66, y = 4, width = 30, height = 38, z = 2 })
+    local down = makeButton(container, panel, mode, "▼", { x = 60, y = 0, width = 58, height = 46, z = 2 })
     log("info", "vote panel construct down done")
-    local upCount = makeCount(container, "0", { x = 38, y = 10, width = 22, height = 26, z = 2 })
+    local upCount = makeCount(container, "0", { x = 48, y = 10, width = 12, height = 26, z = 3 })
     log("info", "vote panel construct up count done")
-    local downCount = makeCount(container, "0", { x = 100, y = 10, width = 22, height = 26, z = 2 })
+    local downCount = makeCount(container, "0", { x = 108, y = 10, width = 12, height = 26, z = 3 })
     log("info", "vote panel construct down count done")
     if up == nil or down == nil or upCount == nil or downCount == nil then
         if not state.diagnostics.buttonsFailed then

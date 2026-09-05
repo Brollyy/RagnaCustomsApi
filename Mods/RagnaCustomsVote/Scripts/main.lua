@@ -836,11 +836,12 @@ local function installHooks()
             state.custom = custom
         end
     end
-    -- Do not hook SongsManager song-entry methods.  They are called during
-    -- custom-song loading and are not safe interception points on all builds;
-    -- a native hook here can crash before Results is ever created.
+    local owners = { "SongsManager" }
+    for _, owner in ipairs(owners) do
+        installHook("/Script/Ragnarock." .. owner .. ":GetBeatMapHashFromCompositeId", function() end, hashPost)
+        installHook("/Script/Ragnarock." .. owner .. ":IsCustomSong", function() end, customPost)
+    end
     installHook("/Script/Ragnarock.BeatMap:GetHash", function() end, hashPost)
-    log("info", "installed safe BeatMap hash hook; SongsManager hooks disabled")
 end
 
 _G.RagnaCustomsVoteSetBeatmapHash = function(hash, isCustom)

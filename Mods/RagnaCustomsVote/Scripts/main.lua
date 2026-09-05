@@ -257,6 +257,16 @@ local function setText(widget, value)
     end, false)
 end
 
+-- Direct property import avoids the blocking SetText wrapper observed on
+-- freshly-constructed TextBlocks in this UE4 build.
+local function setTextProperty(widget, value)
+    if not valid(widget) then return false end
+    return safeCall(function()
+        widget:SetPropertyValue("Text", tostring(value or ""))
+        return true
+    end, false)
+end
+
 local function setColor(widget, color)
     safeCall(function()
         widget:SetColorAndOpacity(color)
@@ -388,7 +398,7 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
         width = geometry.width - 4, height = geometry.height - 4,
         z = 1,
     }) then return nil end
-    if not setText(text, label) then
+    if not setTextProperty(text, label) then
         return nil
     end
     safeCall(function() text:SetJustification(1) end, nil)
@@ -404,7 +414,7 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
     safeCall(function() surface:SetVisibility(3) end, nil) -- HitTestInvisible
     safeCall(function() text:SetVisibility(0) end, nil) -- Visible; below hit target
     -- UE4SS sometimes drops TextBlock state set before attachment.
-    setText(text, label)
+    setTextProperty(text, label)
     safeCall(function() text:InvalidateLayoutAndVolatility() end, nil)
     safeCall(function() text:SynchronizeProperties() end, nil)
     setColor(surface, COLORS.normal)
@@ -421,7 +431,7 @@ local function makeCountLabel(canvas, label, geometry, styleSource)
     if not addToCanvas(canvas, text, geometry) then
         return nil
     end
-    if not setText(text, label) then
+    if not setTextProperty(text, label) then
         return nil
     end
     safeCall(function() text:SetJustification(1) end, nil)
@@ -467,10 +477,10 @@ local function render()
     local downColor = state.currentVote == "down" and COLORS.down or COLORS.normal
     safeCall(function() widgets.up.button:SetColorAndOpacity(upColor) end, nil)
     safeCall(function() widgets.down.button:SetColorAndOpacity(downColor) end, nil)
-    setText(widgets.upVisual.text, "^")
-    setText(widgets.downVisual.text, "v")
-    setText(widgets.upCount, tostring(state.upvotes or 0))
-    setText(widgets.downCount, tostring(state.downvotes or 0))
+    setTextProperty(widgets.upVisual.text, "^")
+    setTextProperty(widgets.downVisual.text, "v")
+    setTextProperty(widgets.upCount, tostring(state.upvotes or 0))
+    setTextProperty(widgets.downCount, tostring(state.downvotes or 0))
     setColor(widgets.upVisual.surface, upColor)
     setColor(widgets.downVisual.surface, downColor)
     setColor(widgets.upVisual.text, state.currentVote == "up"

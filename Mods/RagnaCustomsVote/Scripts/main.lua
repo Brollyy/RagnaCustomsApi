@@ -393,6 +393,8 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
     -- Visual layers must not intercept the invisible stock button hit targets.
     safeCall(function() surface:SetVisibility(3) end, nil) -- HitTestInvisible
     safeCall(function() text:SetVisibility(0) end, nil) -- Visible; parent is hit-test-invisible
+    -- UE4SS sometimes drops TextBlock state set before attachment.
+    setText(text, label)
     setColor(surface, COLORS.normal)
     safeCall(function() surface:SetRenderOpacity(0.22) end, nil)
     setColor(text, { R = 1.0, G = 1.0, B = 1.0, A = 1.0 })

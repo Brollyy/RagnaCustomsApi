@@ -738,15 +738,18 @@ local function findPlayedSongManager()
         return nil
     end
     for _, className in ipairs({ "FlatBeatManager_C", "BeatManager_C", "BeatManager" }) do
-        local manager = safeCall(function()
-            return FindFirstOf(className)
-        end, nil)
-        local managerName = fullName(manager)
-        if valid(manager)
-            and managerName:find("/Engine/Transient.", 1, true) ~= nil
-            and managerName:find("Default__", 1, true) == nil
-            and managerName:find("Latency", 1, true) == nil then
-            return manager, managerName
+        local managers = safeCall(function()
+            if type(FindAllOf) == "function" then return FindAllOf(className) end
+            return { FindFirstOf(className) }
+        end, {})
+        for _, manager in ipairs(managers or {}) do
+            local managerName = fullName(manager)
+            if valid(manager)
+                and managerName:find("/Engine/Transient.", 1, true) ~= nil
+                and managerName:find("Default__", 1, true) == nil
+                and managerName:find("Latency", 1, true) == nil then
+                return manager, managerName
+            end
         end
     end
     return nil

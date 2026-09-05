@@ -178,15 +178,20 @@ local function findActiveResultsPanel()
         { className = "InGameEndPanel_C", mode = "vr" },
         { className = "InGameEndMenu_C", mode = "vr" },
     }) do
-        local object = safeCall(function()
-            return FindFirstOf(candidate.className)
-        end, nil)
-        local objectName = fullName(object)
-        if valid(object)
-            and objectName:find("/Engine/Transient.", 1, true) ~= nil
-            and objectName:find("Default__", 1, true) == nil
-            and visible(object) then
-            return object, objectName, candidate.mode
+        local objects = safeCall(function()
+            if type(FindAllOf) == "function" then
+                return FindAllOf(candidate.className)
+            end
+            return { FindFirstOf(candidate.className) }
+        end, {})
+        for _, object in ipairs(objects or {}) do
+            local objectName = fullName(object)
+            if valid(object)
+                and objectName:find("/Engine/Transient.", 1, true) ~= nil
+                and objectName:find("Default__", 1, true) == nil
+                and visible(object) then
+                return object, objectName, candidate.mode
+            end
         end
     end
     return nil

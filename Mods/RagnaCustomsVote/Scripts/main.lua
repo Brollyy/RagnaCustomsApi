@@ -369,7 +369,7 @@ local COLORS = {
     disabled = { R = 0.52, G = 0.56, B = 0.62, A = 1.0 },
 }
 
-local function makeVisualButton(canvas, label, geometry)
+local function makeVisualButton(canvas, label, geometry, styleSource)
     local surface = construct("/Script/UMG.Border", canvas)
     local text = construct("/Script/UMG.TextBlock", canvas)
     if not valid(surface) or not valid(text) then
@@ -386,6 +386,11 @@ local function makeVisualButton(canvas, label, geometry)
         return nil
     end
     safeCall(function() text:SetJustification(1) end, nil)
+    safeCall(function()
+        local font = styleSource and styleSource:GetFont() or nil
+        if valid(font) then text:SetFont(font) end
+    end, nil)
+    safeCall(function() text:SetRenderOpacity(1.0) end, nil)
     -- Visual layers must not intercept the invisible stock button hit targets.
     safeCall(function() surface:SetVisibility(3) end, nil) -- HitTestInvisible
     safeCall(function() text:SetVisibility(3) end, nil)
@@ -588,8 +593,8 @@ local function createWidgets(panel, panelPath, mode)
     log("info", "vote panel construct down done")
     -- Draw visuals above the stock widgets; SelfHitTestInvisible keeps the
     -- transparent stock widgets as the input surfaces.
-    local upVisual = makeVisualButton(container, "▲ 0", { x = 0, y = 0, width = 58, height = 46, z = 3 })
-    local downVisual = makeVisualButton(container, "▼ 0", { x = 60, y = 0, width = 58, height = 46, z = 3 })
+    local upVisual = makeVisualButton(container, "▲ 0", { x = 0, y = 0, width = 58, height = 46, z = 3 }, up.text)
+    local downVisual = makeVisualButton(container, "▼ 0", { x = 60, y = 0, width = 58, height = 46, z = 3 }, down.text)
     if up == nil or down == nil or upVisual == nil or downVisual == nil then
         if not state.diagnostics.buttonsFailed then
             state.diagnostics.buttonsFailed = true

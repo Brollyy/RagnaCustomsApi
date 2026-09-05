@@ -386,7 +386,7 @@ local COLORS = {
 
 local function makeVisualButton(canvas, label, geometry, styleSource)
     local surface = construct("/Script/UMG.Border", canvas)
-    local text = construct("/Script/UMG.TextBlock", canvas)
+    local text = construct("/Script/UMG.TextBlock", nil)
     if not valid(surface) or not valid(text) then
         return nil
     end
@@ -398,9 +398,7 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
         width = geometry.width - 4, height = geometry.height - 4,
         z = 1,
     }) then return nil end
-    if not setTextProperty(text, label) then
-        return nil
-    end
+    setTextProperty(text, label)
     safeCall(function() text:SetJustification(1) end, nil)
     safeCall(function() text:SetVerticalAlignment(1) end, nil)
     -- Do not copy the stock widget's font object: on some builds it is a
@@ -424,16 +422,14 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
 end
 
 local function makeCountLabel(canvas, label, geometry, styleSource)
-    local text = construct("/Script/UMG.TextBlock", canvas)
+    local text = construct("/Script/UMG.TextBlock", nil)
     if not valid(text) then
         return nil
     end
     if not addToCanvas(canvas, text, geometry) then
         return nil
     end
-    if not setTextProperty(text, label) then
-        return nil
-    end
+    setTextProperty(text, label)
     safeCall(function() text:SetJustification(1) end, nil)
     safeCall(function() text:SetVerticalAlignment(1) end, nil)
     safeCall(function() text:SetFontSize(22) end, nil)

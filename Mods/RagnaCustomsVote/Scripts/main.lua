@@ -396,8 +396,8 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
     safeCall(function() text:SetMinDesiredWidth(54.0) end, nil)
     safeCall(function() text:ForceVolatile(true) end, nil)
     -- Visual layers must not intercept the invisible stock button hit targets.
-    safeCall(function() surface:SetVisibility(3) end, nil) -- HitTestInvisible
-    safeCall(function() text:SetVisibility(0) end, nil) -- Visible; parent is hit-test-invisible
+    safeCall(function() surface:SetVisibility(4) end, nil) -- SelfHitTestInvisible
+    safeCall(function() text:SetVisibility(4) end, nil) -- SelfHitTestInvisible
     -- UE4SS sometimes drops TextBlock state set before attachment.
     setText(text, label)
     safeCall(function() text:InvalidateLayoutAndVolatility() end, nil)

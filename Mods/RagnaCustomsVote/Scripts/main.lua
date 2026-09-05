@@ -523,6 +523,7 @@ local function createWidgets(panel, panelPath, mode)
         and { x = 350, y = 270, width = 120, height = 46 }
         or { x = 340, y = 230, width = 120, height = 46 }
     local container = construct("/Script/UMG.CanvasPanel", canvas)
+    log("info", "vote panel construct container begin")
     if not valid(container) or not addToCanvas(canvas, container, geometry) then
         if not state.diagnostics.containerFailed then
             state.diagnostics.containerFailed = true
@@ -530,16 +531,22 @@ local function createWidgets(panel, panelPath, mode)
         end
         return false
     end
+    log("info", "vote panel construct container done")
     local background = construct("/Script/UMG.Border", container)
     if valid(background) and addToCanvas(container, background, { x = 0, y = 0, width = 120, height = 46, z = 0 }) then
         setColor(background, { R = 0.04, G = 0.03, B = 0.05, A = 0.88 })
     else
         background = nil
     end
+    log("info", "vote panel construct up begin")
     local up = makeButton(container, panel, mode, "▲", { x = 4, y = 4, width = 30, height = 38, z = 2 })
+    log("info", "vote panel construct up done")
     local down = makeButton(container, panel, mode, "▼", { x = 66, y = 4, width = 30, height = 38, z = 2 })
+    log("info", "vote panel construct down done")
     local upCount = makeCount(container, "0", { x = 38, y = 10, width = 22, height = 26, z = 2 })
+    log("info", "vote panel construct up count done")
     local downCount = makeCount(container, "0", { x = 100, y = 10, width = 22, height = 26, z = 2 })
+    log("info", "vote panel construct down count done")
     if up == nil or down == nil or upCount == nil or downCount == nil then
         if not state.diagnostics.buttonsFailed then
             state.diagnostics.buttonsFailed = true

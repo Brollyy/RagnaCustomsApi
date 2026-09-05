@@ -400,7 +400,7 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
     if not addToCanvas(canvas, text, {
         x = geometry.x + 2, y = geometry.y + 2,
         width = geometry.width - 4, height = geometry.height - 4,
-        z = (geometry.z or 2) + 10,
+        z = 1,
     }) then return nil end
     safeCall(function() text:SetJustification(1) end, nil)
     safeCall(function() text:SetVerticalAlignment(1) end, nil)
@@ -413,7 +413,7 @@ local function makeVisualButton(canvas, label, geometry, styleSource)
     safeCall(function() text:ForceVolatile(true) end, nil)
     -- Visual layers must not intercept the invisible stock button hit targets.
     safeCall(function() surface:SetVisibility(3) end, nil) -- HitTestInvisible
-    safeCall(function() text:SetVisibility(3) end, nil) -- HitTestInvisible
+    safeCall(function() text:SetVisibility(0) end, nil) -- Visible; below hit target
     -- UE4SS sometimes drops TextBlock state set before attachment.
     setText(text, label)
     safeCall(function() text:InvalidateLayoutAndVolatility() end, nil)
@@ -441,7 +441,7 @@ local function makeCountLabel(canvas, label, geometry, styleSource)
     safeCall(function() text:SetRenderOpacity(1.0) end, nil)
     safeCall(function() text:SetMinDesiredWidth(54.0) end, nil)
     safeCall(function() text:ForceVolatile(true) end, nil)
-    safeCall(function() text:SetVisibility(3) end, nil) -- HitTestInvisible
+    safeCall(function() text:SetVisibility(0) end, nil) -- Visible; below hit target
     setColor(text, { R = 1.0, G = 1.0, B = 1.0, A = 1.0 })
     safeCall(function() text:InvalidateLayoutAndVolatility() end, nil)
     safeCall(function() text:SynchronizeProperties() end, nil)

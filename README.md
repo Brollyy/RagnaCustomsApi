@@ -11,7 +11,7 @@ python3 scripts/verify_release.py --package dist/RagnaCustomsApi.rmod
 
 For installation and deployment, see the [RagnaModManager application repository](https://github.com/Brollyy/RagnaModManager).
 
-The `.rmod` contains a root manifest and this mod's `Scripts/` tree in a format understandable by RagnaModManager. Other `.rmod`-packaged mods can declare this package as a runtime dependency.
+The `.rmod` is the distributable library package: it contains a root manifest and this mod's `Scripts/` tree. Other `.rmod`-packaged mods can declare it as a runtime dependency.
 
 ```text
 Ragnarock/Binaries/Win64/ue4ss/Mods/RagnaCustomsApi/Scripts/*.lua
@@ -101,7 +101,7 @@ Song objects normalize fields needed by UI mods:
 
 The library prefers the official app API (`https://api.ragnacustoms.com/api/search/<term>`, `https://api.ragnacustoms.com/api/song/<id>`, `https://api.ragnacustoms.com/api/song/check-updates`, and `https://api.ragnacustoms.com/api/song-list/<id>`) and falls back to public web-page parsing where needed.
 
-For display code, `toUiSong(song)` projects normalized song data into UI-ready strings such as `subtitle`, `artistText`, `difficultyText`, `durationText`, `voteText`, `installText`, and resolved install/download URLs. Install state is tri-state, so `installText` is `"Unknown"` until the installed-song cache has been scanned. `toUiSongs(songs)` maps a list through the same projection. `searchUi(query)` and `getSongUi(songOrId)` compose search/detail lookup with that projection for consumer list and detail screens.
+The UI helpers turn normalized song data into stable display rows. `toUiSong` adds formatted title, artist, difficulty, duration, vote, install-state, and URL fields; `toUiSongs`, `searchUi`, and `getSongUi` apply the same projection to lists and details.
 
 Use `getCapabilities()` before rendering consumer UI actions. It reports whether the current configuration can fetch the API, open one-click links, download/extract zips, scan installed songs, or vote.
 
@@ -185,10 +185,13 @@ Use `RagnaCustoms.on("*", callback)` to observe all events. Use `RagnaCustoms.of
 
 ## Voting
 
-The library supports both server-known voting surfaces. The usual authenticated website/app routes take a numeric song id and use the single consumer-provided `apiKey` through normal HTTP headers; their paths are fixed by the library and are not configurable.
+The library supports both server-known voting surfaces. The usual website/app routes take a numeric song id and require the caller's authenticated website session. Supply an `httpPost` hook that provides that session; the route paths are fixed by the library and are not configurable. The single `apiKey` remains available for authenticated API/download requests.
 
 ```lua
-RagnaCustoms.configure({ apiKey = "your-consumer-key" })
+RagnaCustoms.configure({
+    apiKey = "your-consumer-key",
+    httpPost = MyAuthenticatedPost,
+})
 RagnaCustoms.upvote(song)
 RagnaCustoms.downvote(song)
 ```

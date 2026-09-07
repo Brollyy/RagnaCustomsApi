@@ -1089,9 +1089,7 @@ function Api.getCapabilities()
         scoreEndpoint = scoreEndpointFromRuntime() or scoreEndpointFromConfig()
     end
     local canWanApiVote = scoreEndpoint ~= nil and deriveVoteEndpoint(scoreEndpoint) ~= nil and hasHttpRequest
-    local hasConsumerApiKey = state.config.apiKey ~= nil and tostring(state.config.apiKey) ~= ""
     local canAuthenticatedVote = type(state.config.httpPost) == "function"
-        or (hasConsumerApiKey and hasHttpPost)
 
     return {
         version = Api.VERSION,

@@ -295,10 +295,13 @@ Installed entry shape:
 
 ## Voting
 
-The usual authenticated website/app voting routes use the single consumer-owned API key and fixed server routes:
+The usual website/app voting routes use fixed server routes and the caller's authenticated website session. Provide an authenticated `httpPost` transport; the API key alone is not a browser session:
 
 ```lua
-RagnaCustoms.configure({ apiKey = "your-consumer-key" })
+RagnaCustoms.configure({
+    apiKey = "your-consumer-key",
+    httpPost = MyAuthenticatedPost,
+})
 RagnaCustoms.upvote(song) -- POST /song-vote/upvote/<song id>
 RagnaCustoms.downvote(song) -- POST /song-vote/downvote/<song id>
 ```

@@ -184,17 +184,17 @@
     {
       "name": "vote",
       "category": "voting",
-      "signature": "vote(songOrHash, direction, options)"
+      "signature": "vote(songOrId, direction, options)"
     },
     {
       "name": "upvote",
       "category": "voting",
-      "signature": "upvote(songOrHash, options)"
+      "signature": "upvote(songOrId, options)"
     },
     {
       "name": "downvote",
       "category": "voting",
-      "signature": "downvote(songOrHash, options)"
+      "signature": "downvote(songOrId, options)"
     }
   ]
 }

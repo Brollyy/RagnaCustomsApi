@@ -203,37 +203,46 @@ local function rootPath(panelName)
         or tostring(panelName or "")
 end
 
-local function findCanvas(panel, panelPath, mode)
-    -- The widget-tree root is the stable owner for newly-created TextBlocks.
-    local tree = safeCall(function()
-        return panel.WidgetTree
-    end, nil)
-    local root = tree and safeCall(function()
-        return tree.RootWidget
-    end, nil) or nil
-    if valid(root) then
-        if not state.diagnostics.resultsRoot then
-            state.diagnostics.resultsRoot = true
-            log("info", "Results root candidate " .. fullName(root))
+local function findInfoCanvas(panelPath)
+    -- The vote controls belong to the Info tab's hierarchy. This keeps them
+    -- hidden automatically whenever the Results screen switches tabs.
+    for _, className in ipairs({ "FlatItem_SongInfoEnd_C", "FlatItem_SongInfoEnd" }) do
+        local widgets = safeCall(function()
+            if type(FindAllOf) == "function" then return FindAllOf(className) end
+            return { FindFirstOf(className) }
+        end, {})
+        for _, infoWidget in ipairs(widgets or {}) do
+            local name = fullName(infoWidget)
+            if valid(infoWidget)
+                and visible(infoWidget)
+                and name:find(tostring(panelPath or ""), 1, true) ~= nil then
+                local tree = safeCall(function() return infoWidget.WidgetTree end, nil)
+                local root = tree and safeCall(function() return tree.RootWidget end, nil) or nil
+                if valid(root) then
+                    if not state.diagnostics.songInfoCanvas then
+                        state.diagnostics.songInfoCanvas = true
+                        log("info", "song info canvas " .. fullName(root))
+                    end
+                    return root, infoWidget
+                end
+            end
         end
-        return root, tree
     end
-    -- Fall back to the specific visible content canvas if the root is not
-    -- CanvasPanel-like on a different UI build.
     if type(FindAllOf) == "function" then
         local candidates = safeCall(function() return FindAllOf("CanvasPanel") end, {})
         for _, candidate in ipairs(candidates or {}) do
             local name = fullName(candidate)
             if valid(candidate)
-                and visible(candidate)
                 and name:find(tostring(panelPath or ""), 1, true) ~= nil
-                and name:find("FlatItem_SongInfoEnd.WidgetTree.CanvasPanel", 1, true) ~= nil
+                and name:find("FlatItem_SongInfoEnd.WidgetTree.CanvasPanel_0", 1, true) ~= nil
                 and name:find("FlatLeaderboard_C_", 1, true) == nil then
-                if not state.diagnostics.resultsCanvas then
-                    state.diagnostics.resultsCanvas = true
-                    log("info", "Results content canvas candidate " .. name)
+                if visible(candidate) then
+                    if not state.diagnostics.songInfoCanvas then
+                        state.diagnostics.songInfoCanvas = true
+                        log("info", "song info canvas " .. name)
+                    end
+                    return candidate, nil
                 end
-                return candidate
             end
         end
     end
@@ -281,6 +290,9 @@ local function addToCanvas(canvas, widget, geometry)
     end
     local function configure(targetSlot)
         targetSlot:SetAutoSize(false)
+        if geometry.anchorRight then
+            targetSlot:SetAnchors({ Minimum = { X = 1.0, Y = 0.0 }, Maximum = { X = 1.0, Y = 0.0 } })
+        end
         targetSlot:SetPosition({ X = geometry.x, Y = geometry.y })
         targetSlot:SetSize({ X = geometry.width, Y = geometry.height })
         targetSlot:SetZOrder(geometry.z or 9000)
@@ -638,7 +650,7 @@ local function installButtonHooks()
 end
 
 local function createWidgets(panel, panelPath, mode)
-    local canvas = findCanvas(panel, panelPath, mode)
+    local canvas = findInfoCanvas(panelPath)
     if not valid(canvas) then
         if not state.diagnostics.canvasMissing then
             state.diagnostics.canvasMissing = true
@@ -646,7 +658,15 @@ local function createWidgets(panel, panelPath, mode)
         end
         return false
     end
-    local geometry = { x = 957, y = 745, width = 108, height = 112 }
+    local buttonWidth, buttonHeight = 96, 42
+    local voteHeight = 112
+    local geometry = {
+        x = 530,
+        y = 17,
+        width = 108,
+        height = voteHeight,
+        anchorRight = true,
+    }
     local container = construct("/Script/UMG.CanvasPanel", canvas)
     log("info", "vote panel construct container begin")
     if not valid(container) or not addToCanvas(canvas, container, geometry) then
@@ -658,9 +678,9 @@ local function createWidgets(panel, panelPath, mode)
     end
     log("info", "vote panel construct container done")
     log("info", "vote panel construct up begin")
-    local up = makeButton(container, panel, mode, "▲ 0", { x = 6, y = 7, width = 96, height = 42, z = 2 })
+    local up = makeButton(container, panel, mode, "▲ 0", { x = 6, y = 7, width = buttonWidth, height = buttonHeight, z = 2 })
     log("info", "vote panel construct up done")
-    local down = makeButton(container, panel, mode, "▼ 0", { x = 6, y = 63, width = 96, height = 42, z = 2 })
+    local down = makeButton(container, panel, mode, "▼ 0", { x = 6, y = 63, width = buttonWidth, height = buttonHeight, z = 2 })
     log("info", "vote panel construct down done")
     if up == nil or down == nil then
         if not state.diagnostics.buttonsFailed then

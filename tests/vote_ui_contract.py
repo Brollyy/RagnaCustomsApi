@@ -40,7 +40,7 @@ def main() -> int:
         "numeric = numeric + 4294967296",
         "captureOnGameThread",
         "findPlayedSongManager",
-        "local canvas = findCanvas",
+        "findInfoCanvas(panelPath)",
         "Default__WidgetBlueprintLibrary",
         "FlatInGameButton.FlatInGameButton_C",
         "WBP_Button_Basic.WBP_Button_Basic_C",
@@ -51,27 +51,30 @@ def main() -> int:
         'managerName:find("/Engine/Transient.", 1, true)',
         "Reflected GameInstance getters are game-thread calls",
         "state.lastSettingPanelPath ~= panelPathForProbe",
-        "local geometry = { x = 650, y = 280, width = 108, height = 112 }",
-        'surface:SetVisibility(3)',
-        'text:SetFontSize(26)',
-        'text:SetFontSize(22)',
-        'local upCount = makeCountLabel',
-        'local downCount = makeCountLabel',
+        "local canvas = findInfoCanvas",
+        'name:find("FlatItem_SongInfoEnd.WidgetTree.CanvasPanel_0", 1, true)',
+        'anchorRight = true',
+        'Minimum = { X = 1.0, Y = 0.0 }',
+        'x = 530',
     ]:
         assert expected in source, f"missing Results UI behavior: {expected}"
     assert "OnClicked:Add" not in source
     assert "state.currentVote == direction and nil or direction" not in source
     assert "if state.currentVote == direction then\n        desired = nil" in source
-    assert "/Script/UMG.Button:SlateHandleClicked" not in source
     assert "io.popen" not in source
     assert 'FindAllOf("UserWidget")' not in source
-    assert 'FindAllOf("CanvasPanel")' not in source
+    assert 'FindAllOf("CanvasPanel")' in source
     assert 'FindAllOf("Button")' not in source
-    assert 'FindAllOf("TextBlock")' not in source
+    assert 'FindAllOf("Border")' not in source
+    assert 'construct("/Script/UMG.TextBlock"' not in source
     assert "resolvePlayedSongState()" not in source
     assert "resolvePlayedSongState(manager)" in source
     assert "button:AddChild(text)" not in source
     assert "button:SetContent(text)" not in source
+    assert "makeVisualButton" not in source
+    assert "upVisual" not in source
+    assert "downVisual" not in source
+    assert 'construct("/Script/UMG.Border"' not in source
     assert 'construct("/Script/UMG.Button"' not in source
     assert "FindFirstOf(candidate.className)" in source
     assert "FlatItem_PlayerStats" not in source

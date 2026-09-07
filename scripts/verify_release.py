@@ -7,6 +7,8 @@ from pathlib import Path
 import sys
 import zipfile
 
+from version import VERSION
+
 
 ROOT = Path(__file__).resolve().parents[1]
 MOD_NAME = "RagnaCustomsApi"
@@ -79,8 +81,8 @@ def package_hashes(package_path: Path) -> dict[str, str]:
         expected_files_manifest = [{"type": "ue4ss-lua", "source": "Scripts/", "modFolder": MOD_NAME}]
         if files != expected_files_manifest:
             raise AssertionError(f"unexpected manifest files: {files}")
-        if manifest.get("version") != "0.3.0":
-            raise AssertionError("manifest version must be 0.3.0")
+        if manifest.get("version") != VERSION:
+            raise AssertionError(f"manifest version must be {VERSION}")
         if manifest.get("requires") != {"manager": ">=1.1.0"}:
             raise AssertionError("manifest must require the dependency-aware manager")
         return {

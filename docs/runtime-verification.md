@@ -7,21 +7,7 @@ python3 scripts/package.py --output dist/RagnaCustomsApi.rmod
 python3 scripts/verify_release.py --package dist/RagnaCustomsApi.rmod
 ```
 
-Install through RagnaModManager:
-
-```bash
-python3 scripts/install_rmod.py \
-  --package dist/RagnaCustomsApi.rmod \
-  --manager-cli "/path/to/RagnaModManager" \
-  --game-dir "/path/to/steamapps/common/Ragnarock"
-```
-
-Use the standalone checker to separate manager deployment from UE4SS runtime availability:
-
-```bash
-python3 scripts/check_install.py --game-dir "/path/to/steamapps/common/Ragnarock"
-python3 scripts/check_install.py --game-dir "/path/to/steamapps/common/Ragnarock" --source-root .
-```
+Deploy the resulting package with the RagnaModManager application, then use its installed-mod view to confirm deployment before testing UE4SS runtime loading.
 
 Run the complete offline verification suite:
 
@@ -44,16 +30,16 @@ api_lua: yes
 installed_current: yes
 ```
 
-If `ue4ss_present` is `no`, the mod can be installed and enabled in `Mods/mods.txt`, but Ragnarock will not execute UE4SS Lua mods yet. Install UE4SS into `Ragnarock/Ragnarock/Binaries/Win64` first, then launch the game and check `UE4SS.log` for:
+If UE4SS is unavailable, Ragnarock will not execute UE4SS Lua mods yet. Install UE4SS first, then launch the game and check `UE4SS.log` for:
 
 ```text
-[RagnaCustomsApi] loaded 0.3.0
+[RagnaCustomsApi] loaded <version from VERSION>
 ```
 
 Or run:
 
 ```bash
-python3 scripts/check_runtime_log.py --game-dir "/path/to/steamapps/common/Ragnarock"
+python3 scripts/check_runtime_log.py --game-dir "/path/to/steamapps/common/Ragnarock" --version "$(tr -d '[:space:]' < VERSION)"
 ```
 
 The runtime checker also accepts the diagnostic marker written by the mod after `main.lua` successfully loads the library:

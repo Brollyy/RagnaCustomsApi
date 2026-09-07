@@ -9,13 +9,11 @@ import sys
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PACKAGE = "dist/RagnaCustomsApi.rmod"
 OFFLINE_TESTS = (
-    "tests/validate.py",
     "tests/parser_contract.py",
     "tests/api_contract.py",
     "tests/installed_contract.py",
-    "tests/install_rmod_contract.py",
     "tests/capabilities_contract.py",
-    "tests/vote_endpoint_contract.py",
+    "tests/public_surface_contract.py",
 )
 
 
@@ -53,9 +51,6 @@ def main() -> int:
     if args.game_dir:
         verify_command.extend(["--game-dir", args.game_dir])
     run(verify_command)
-    if args.game_dir:
-        run([sys.executable, "scripts/check_install.py", "--game-dir", args.game_dir])
-
     if args.live:
         run([
             sys.executable,

@@ -1,5 +1,5 @@
 local Api = {
-    VERSION = "0.3.0",
+    VERSION = "0.2.0",
 }
 
 local state = {
@@ -1020,7 +1020,7 @@ function Api.getConfig()
     return copy
 end
 
-function Api.discoverScoreEndpoint()
+local function discoverWanApiScoreEndpoint()
     if state.config.useWanApi ~= true then
         return setError("WanApi voting is opt-in; configure useWanApi=true")
     end
@@ -1030,14 +1030,6 @@ function Api.discoverScoreEndpoint()
     end
     emit("vote.endpoint.discovered", { endpoint = redactEndpoint(endpoint) })
     return endpoint
-end
-
-function Api.deriveVoteEndpoint(scoreEndpoint)
-    return deriveVoteEndpoint(scoreEndpoint)
-end
-
-function Api.redactEndpoint(endpoint)
-    return redactEndpoint(endpoint)
 end
 
 function Api.setRuntimePaths(paths)
@@ -1085,6 +1077,7 @@ function Api.getCapabilities()
     local hasSongFolder = songFolder ~= nil and songFolder ~= ""
     local hasShell = state.config.allowShell == true
     local hasHttpGet = type(state.config.httpGet) == "function" or hasShell
+    local hasHttpPost = type(state.config.httpPost) == "function" or hasShell
     local hasHttpRequest = type(state.config.httpRequest) == "function"
         or (type(StaticFindObject) == "function" and type(StaticConstructObject) == "function" and type(ExecuteWithDelay) == "function")
     local hasDownload = type(state.config.downloadFile) == "function" or hasShell
@@ -1095,7 +1088,10 @@ function Api.getCapabilities()
     if state.config.useWanApi == true then
         scoreEndpoint = scoreEndpointFromRuntime() or scoreEndpointFromConfig()
     end
-    local canVote = scoreEndpoint ~= nil and deriveVoteEndpoint(scoreEndpoint) ~= nil and hasHttpRequest
+    local canWanApiVote = scoreEndpoint ~= nil and deriveVoteEndpoint(scoreEndpoint) ~= nil and hasHttpRequest
+    local hasConsumerApiKey = state.config.apiKey ~= nil and tostring(state.config.apiKey) ~= ""
+    local canAuthenticatedVote = type(state.config.httpPost) == "function"
+        or (hasConsumerApiKey and hasHttpPost)
 
     return {
         version = Api.VERSION,
@@ -1125,10 +1121,12 @@ function Api.getCapabilities()
         canExtractZip = hasSongFolder and hasDownload and hasUnzip,
         canScanInstalled = hasSongFolder and hasListFiles,
         canWriteInstallMetadata = hasSongFolder and (type(state.config.writeFile) == "function" or io ~= nil),
-        canVote = canVote,
-        voteConfigured = scoreEndpoint ~= nil and deriveVoteEndpoint(scoreEndpoint) ~= nil,
+        canVote = canAuthenticatedVote or canWanApiVote,
+        voteConfigured = canAuthenticatedVote or canWanApiVote,
+        canAuthenticatedVote = canAuthenticatedVote,
+        canWanApiVote = canWanApiVote,
         scoreEndpoint = scoreEndpoint and redactEndpoint(scoreEndpoint) or nil,
-        voteMode = state.config.useWanApi == true and "wanapi" or "disabled",
+        voteMode = state.config.useWanApi == true and "wanapi" or "authenticated",
     }
 end
 
@@ -1811,7 +1809,7 @@ end
 local function resolveVoteScoreEndpoint(options)
     options = options or {}
     if options.useWanApi == true or state.config.useWanApi == true then
-        return Api.discoverScoreEndpoint()
+        return discoverWanApiScoreEndpoint()
     end
     return nil, "WanApi voting is disabled; configure useWanApi=true"
 end
@@ -1915,32 +1913,45 @@ local function performVoteRequest(method, beatmap, direction, callback, options)
     return generation
 end
 
-function Api.getVote(beatmap, callback, options)
+function Api.getWanApiVote(beatmap, callback, options)
     return performVoteRequest("GET", beatmap, nil, callback, options)
 end
 
-function Api.setVote(beatmap, direction, callback, options)
+function Api.setWanApiVote(beatmap, direction, callback, options)
     return performVoteRequest("PUT", beatmap, direction, callback, options)
 end
 
-function Api.clearVote(beatmap, callback, options)
-    return Api.setVote(beatmap, nil, callback, options)
+function Api.clearWanApiVote(beatmap, callback, options)
+    return Api.setWanApiVote(beatmap, nil, callback, options)
 end
 
-function Api.vote(songOrHash, direction, options)
+function Api.vote(songOrId, direction, options)
     options = options or {}
-    local beatmap = type(songOrHash) == "table"
-        and (songOrHash.hash or songOrHash.wanadevHash or songOrHash.beatmap)
-        or songOrHash
-    return Api.setVote(beatmap, direction, options.callback, options)
+    local id = type(songOrId) == "table" and songOrId.id or songOrId
+    if id == nil or trim(id) == "" then
+        return setError("missing song id")
+    end
+    local cleanDirection = tostring(direction or ""):lower()
+    if cleanDirection ~= "up" and cleanDirection ~= "down" then
+        return setError("vote direction must be 'up' or 'down'")
+    end
+    local path = cleanDirection == "up" and "/song-vote/upvote/" or "/song-vote/downvote/"
+    emit("vote.started", { id = id, direction = cleanDirection })
+    local response, err = httpPost(joinUrl(state.config.baseUrl, path .. urlEncode(id)), "")
+    if err then
+        emit("vote.failed", { id = id, direction = cleanDirection, error = err })
+        return nil, err
+    end
+    emit("vote.completed", { id = id, direction = cleanDirection, response = response })
+    return response
 end
 
-function Api.upvote(songOrHash, options)
-    return Api.vote(songOrHash, "up", options)
+function Api.upvote(songOrId, options)
+    return Api.vote(songOrId, "up", options)
 end
 
-function Api.downvote(songOrHash, options)
-    return Api.vote(songOrHash, "down", options)
+function Api.downvote(songOrId, options)
+    return Api.vote(songOrId, "down", options)
 end
 
 Api._internals = {

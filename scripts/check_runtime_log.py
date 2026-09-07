@@ -3,9 +3,11 @@ from __future__ import annotations
 import argparse
 from pathlib import Path
 
+from version import VERSION
+
 
 MOD_NAME = "RagnaCustomsApi"
-EXPECTED_VERSION = "0.3.0"
+EXPECTED_VERSION = VERSION
 
 
 def win64_dir(game_dir: Path) -> Path:

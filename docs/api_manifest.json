@@ -1,6 +1,6 @@
 {
   "modId": "RagnaCustomsApi",
-  "version": "0.3.0",
+  "version": "0.2.0",
   "globals": [
     "RagnaCustomsApi",
     "RagnaCustoms"
@@ -167,34 +167,19 @@
       "signature": "downloadSong(songOrId, options)"
     },
     {
-      "name": "discoverScoreEndpoint",
-      "category": "voting",
-      "signature": "discoverScoreEndpoint()"
+      "name": "getWanApiVote",
+      "category": "wanapi",
+      "signature": "getWanApiVote(beatmap, callback, options)"
     },
     {
-      "name": "deriveVoteEndpoint",
-      "category": "voting",
-      "signature": "deriveVoteEndpoint(scoreEndpoint)"
+      "name": "setWanApiVote",
+      "category": "wanapi",
+      "signature": "setWanApiVote(beatmap, direction, callback, options)"
     },
     {
-      "name": "redactEndpoint",
-      "category": "voting",
-      "signature": "redactEndpoint(endpoint)"
-    },
-    {
-      "name": "getVote",
-      "category": "voting",
-      "signature": "getVote(beatmap, callback, options)"
-    },
-    {
-      "name": "setVote",
-      "category": "voting",
-      "signature": "setVote(beatmap, direction, callback, options)"
-    },
-    {
-      "name": "clearVote",
-      "category": "voting",
-      "signature": "clearVote(beatmap, callback, options)"
+      "name": "clearWanApiVote",
+      "category": "wanapi",
+      "signature": "clearWanApiVote(beatmap, callback, options)"
     },
     {
       "name": "vote",

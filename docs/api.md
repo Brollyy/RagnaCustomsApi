@@ -25,7 +25,7 @@ Supported options:
     scriptDir = nil,
     win64Dir = nil,
     gameDir = nil,
-    apiKey = nil, -- consumer API key for authenticated /api and download endpoints
+    apiKey = nil, -- consumer API key for authenticated API, download, and website/app vote endpoints
     headers = {},
     useWanApi = false, -- opt in to the game's configured /wanapi/score/{key} contract
     gameConfigPath = nil,
@@ -143,14 +143,14 @@ RagnaCustoms.setRuntimePaths({
 })
 ```
 
-## Install The Mod
+## Package And Install The Mod
 
 ```bash
-python3 scripts/install.py --game-dir "/path/to/steamapps/common/Ragnarock" --replace
-python3 scripts/package.py --output dist/RagnaCustomsApi.zip
+python3 scripts/package.py --output dist/RagnaCustomsApi.rmod
+dotnet run --project /path/to/RagnaModManager/src/ui/RagnaModManager.Cli -- import dist/RagnaCustomsApi.rmod
 ```
 
-The installer copies `Mods/RagnaCustomsApi` into the UE4SS `Mods` directory and enables `RagnaCustomsApi : 1` in `mods.txt`.
+RagnaModManager owns deployment into the active UE4SS layout and updates `mods.txt`.
 
 Use `scripts/probe_api.py` as an optional live network check when you want to verify that the RagnaCustoms endpoints still match the library assumptions:
 
@@ -296,20 +296,21 @@ Installed entry shape:
 
 ## Voting
 
+The usual authenticated website/app voting routes use the single consumer-owned API key and fixed server routes:
+
 ```lua
--- Configure the single consumer-owned RC API key for authenticated /api endpoints.
 RagnaCustoms.configure({ apiKey = "your-consumer-key" })
-
--- Optional canonical in-game mode: discover CustomApiURLs from the game/config.
-RagnaCustoms.configure({ useWanApi = true })
-local scoreEndpoint = RagnaCustoms.discoverScoreEndpoint()
-local voteEndpoint = RagnaCustoms.deriveVoteEndpoint(scoreEndpoint)
-local safeForLogs = RagnaCustoms.redactEndpoint(scoreEndpoint)
-
-RagnaCustoms.getVote(beatmapHash, function(result) end)
-RagnaCustoms.setVote(beatmapHash, "up", function(result) end)
-RagnaCustoms.setVote(beatmapHash, "down", function(result) end)
-RagnaCustoms.clearVote(beatmapHash, function(result) end)
+RagnaCustoms.upvote(song) -- POST /song-vote/upvote/<song id>
+RagnaCustoms.downvote(song) -- POST /song-vote/downvote/<song id>
 ```
 
-Voting uses the server-known `/wanapi/score/{apiKey}/vote` endpoints. Set `useWanApi = true` to opt in; the library then reads `CustomApiURLs` from the game instance or `Game.ini` and does not require a second API-key setting. The existing single `apiKey` option is used for authenticated `/api` and download endpoints. VaRest requests are asynchronous, desired-state PUTs are retry-safe, stale replies are ignored, and exposed endpoint strings redact the API-key segment.
+WanApi is a separate opt-in surface. Set `useWanApi = true` when the game has configured `CustomApiURLs`; the library discovers the server-known `/wanapi/score/{apiKey}` route and does not require a second API-key setting:
+
+```lua
+RagnaCustoms.configure({ useWanApi = true })
+RagnaCustoms.getWanApiVote(beatmapHash, function(result) end)
+RagnaCustoms.setWanApiVote(beatmapHash, "up", function(result) end)
+RagnaCustoms.clearWanApiVote(beatmapHash, function(result) end)
+```
+
+WanApi requests use VaRest asynchronously, desired-state PUTs are retry-safe, and stale replies are ignored. Endpoint values remain internal and are redacted in status/events.

@@ -13,12 +13,9 @@ OFFLINE_TESTS = (
     "tests/parser_contract.py",
     "tests/api_contract.py",
     "tests/installed_contract.py",
-    "tests/ui_contract.py",
-    "tests/install_vote_contract.py",
     "tests/install_rmod_contract.py",
     "tests/capabilities_contract.py",
     "tests/vote_endpoint_contract.py",
-    "tests/vote_ui_contract.py",
 )
 
 
@@ -49,8 +46,6 @@ def main() -> int:
     args = parser.parse_args()
 
     run([sys.executable, "scripts/package.py", "--output", args.package])
-    run([sys.executable, "scripts/package_vote.py", "--output", "dist/RagnaCustomsVote.rmod"])
-
     for test in OFFLINE_TESTS:
         run([sys.executable, test])
 
@@ -58,8 +53,6 @@ def main() -> int:
     if args.game_dir:
         verify_command.extend(["--game-dir", args.game_dir])
     run(verify_command)
-    run([sys.executable, "scripts/verify_vote_release.py", "--package", "dist/RagnaCustomsVote.rmod"])
-
     if args.game_dir:
         run([sys.executable, "scripts/check_install.py", "--game-dir", args.game_dir])
 

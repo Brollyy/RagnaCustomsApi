@@ -1,14 +1,12 @@
 # RagnaCustomsApi
 
-Two RagnaModManager-managed UE4SS Lua mods: a reusable RagnaCustoms client library and Flat/PC-VR Results voting controls.
+A RagnaModManager-managed UE4SS Lua library mod for consuming RagnaCustoms catalog, installation, and voting services from other Ragnarock mods.
 
 Build a RagnaModManager package:
 
 ```bash
 python3 scripts/package.py --output dist/RagnaCustomsApi.rmod
-python3 scripts/package_vote.py --output dist/RagnaCustomsVote.rmod
 python3 scripts/verify_release.py --package dist/RagnaCustomsApi.rmod
-python3 scripts/verify_vote_release.py --package dist/RagnaCustomsVote.rmod
 ```
 
 Install it through RagnaModManager:
@@ -21,7 +19,7 @@ python3 scripts/install_rmod.py \
 python3 scripts/check_install.py --game-dir "/path/to/steamapps/common/Ragnarock" --source-root .
 ```
 
-Each `.rmod` contains a root manifest and its `Scripts/` tree. RagnaModManager 1.1 detects the active UE4SS layout, deploys the files, and writes `mods.txt`. `RagnaCustomsVote` declares `ragnacustoms-api >=0.2.0`, so the manager blocks invalid profiles and loads the library first.
+The `.rmod` contains a root manifest and this mod's `Scripts/` tree. RagnaModManager 1.1 detects the active UE4SS layout, deploys the files, and writes `mods.txt`. UI consumers such as `RagnaCustomsVote` declare this package as a runtime dependency.
 
 ```text
 Ragnarock/Binaries/Win64/ue4ss/Mods/RagnaCustomsApi/Scripts/*.lua

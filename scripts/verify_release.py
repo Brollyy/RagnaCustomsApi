@@ -73,6 +73,8 @@ def package_hashes(package_path: Path) -> dict[str, str]:
             raise AssertionError(f"manifest id must be {MOD_ID}")
         if manifest.get("name") != MOD_NAME:
             raise AssertionError(f"manifest name must be {MOD_NAME}")
+        if manifest.get("author") != "Brollyy":
+            raise AssertionError("manifest author must be Brollyy")
         if manifest.get("game") != "ragnarock":
             raise AssertionError("manifest game must be ragnarock")
         files = manifest.get("files")

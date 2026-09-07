@@ -8,21 +8,16 @@ import zipfile
 ROOT = Path(__file__).resolve().parents[1]
 LIB = ROOT / "Mods" / "RagnaCustomsApi" / "Scripts" / "ragnacustoms_api.lua"
 MAIN = ROOT / "Mods" / "RagnaCustomsApi" / "Scripts" / "main.lua"
-VOTE_MAIN = ROOT / "Mods" / "RagnaCustomsVote" / "Scripts" / "main.lua"
 INSTALLER = ROOT / "scripts" / "install.py"
 RMM_INSTALLER = ROOT / "scripts" / "install_rmod.py"
 RUNTIME_LOG_CHECKER = ROOT / "scripts" / "check_runtime_log.py"
 CHECKER = ROOT / "scripts" / "check_install.py"
 PACKAGER = ROOT / "scripts" / "package.py"
-VOTE_PACKAGER = ROOT / "scripts" / "package_vote.py"
 RELEASE_VERIFIER = ROOT / "scripts" / "verify_release.py"
-VOTE_RELEASE_VERIFIER = ROOT / "scripts" / "verify_vote_release.py"
 API_PROBE = ROOT / "scripts" / "probe_api.py"
 RUN_CHECKS = ROOT / "scripts" / "run_checks.py"
 EXAMPLE = ROOT / "examples" / "ConsumerExample" / "Scripts" / "main.lua"
 INSTALLED_CONTRACT = ROOT / "tests" / "installed_contract.py"
-UI_CONTRACT = ROOT / "tests" / "ui_contract.py"
-INSTALL_VOTE_CONTRACT = ROOT / "tests" / "install_vote_contract.py"
 CAPABILITIES_CONTRACT = ROOT / "tests" / "capabilities_contract.py"
 MANIFEST = ROOT / "docs" / "api_manifest.json"
 FORBIDDEN_PACKAGING_NAME = "Ragna" + "Loader"
@@ -31,21 +26,16 @@ FORBIDDEN_PACKAGING_NAME = "Ragna" + "Loader"
 def main() -> int:
     assert LIB.exists(), f"missing {LIB}"
     assert MAIN.exists(), f"missing {MAIN}"
-    assert VOTE_MAIN.exists(), f"missing {VOTE_MAIN}"
     assert INSTALLER.exists(), f"missing {INSTALLER}"
     assert RMM_INSTALLER.exists(), f"missing {RMM_INSTALLER}"
     assert RUNTIME_LOG_CHECKER.exists(), f"missing {RUNTIME_LOG_CHECKER}"
     assert CHECKER.exists(), f"missing {CHECKER}"
     assert PACKAGER.exists(), f"missing {PACKAGER}"
-    assert VOTE_PACKAGER.exists(), f"missing {VOTE_PACKAGER}"
     assert RELEASE_VERIFIER.exists(), f"missing {RELEASE_VERIFIER}"
-    assert VOTE_RELEASE_VERIFIER.exists(), f"missing {VOTE_RELEASE_VERIFIER}"
     assert API_PROBE.exists(), f"missing {API_PROBE}"
     assert RUN_CHECKS.exists(), f"missing {RUN_CHECKS}"
     assert EXAMPLE.exists(), f"missing {EXAMPLE}"
     assert INSTALLED_CONTRACT.exists(), f"missing {INSTALLED_CONTRACT}"
-    assert UI_CONTRACT.exists(), f"missing {UI_CONTRACT}"
-    assert INSTALL_VOTE_CONTRACT.exists(), f"missing {INSTALL_VOTE_CONTRACT}"
     assert CAPABILITIES_CONTRACT.exists(), f"missing {CAPABILITIES_CONTRACT}"
     assert MANIFEST.exists(), f"missing {MANIFEST}"
 
@@ -126,16 +116,11 @@ def main() -> int:
     assert '"modFolder": MOD_NAME' in PACKAGER.read_text()
     assert '"source": "Scripts/"' in PACKAGER.read_text()
     assert '">=1.1.0"' in PACKAGER.read_text()
-    assert '"ragnacustoms-api": ">=0.2.0"' in VOTE_PACKAGER.read_text()
     assert "package_hashes" in RELEASE_VERIFIER.read_text()
     assert "legacy_installed_copy" in RELEASE_VERIFIER.read_text()
     assert "probe_song" in API_PROBE.read_text()
     assert "OFFLINE_TESTS" in RUN_CHECKS.read_text()
     assert "scan_installed_songs" in INSTALLED_CONTRACT.read_text()
-    assert "to_ui_song" in UI_CONTRACT.read_text()
-    assert "search_ui" in UI_CONTRACT.read_text()
-    assert "get_song_ui" in UI_CONTRACT.read_text()
-    assert "install_song_one_click" in INSTALL_VOTE_CONTRACT.read_text()
     assert "capabilities(" in CAPABILITIES_CONTRACT.read_text()
     for expected in [
         "getCapabilities",
@@ -167,7 +152,7 @@ def main() -> int:
         ]
 
     for path in ROOT.rglob("*"):
-        if path.is_file() and ".git" not in path.parts:
+        if path.is_file() and ".git" not in path.parts and "__pycache__" not in path.parts:
             assert FORBIDDEN_PACKAGING_NAME not in path.read_text(errors="ignore"), (
                 f"unexpected packaging name mention in {path}"
             )

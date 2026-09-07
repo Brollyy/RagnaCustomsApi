@@ -18,9 +18,7 @@ def capabilities(config: dict) -> dict:
     has_download = callable(config.get("downloadFile")) or has_shell
     has_unzip = callable(config.get("unzipFile")) or has_shell
     has_list_files = callable(config.get("listFiles")) or has_shell
-    vote_configured = bool(config.get("voteApiKey")) or (
-        config.get("useWanApi") is True and bool(config.get("wanApiScoreEndpoint"))
-    )
+    vote_configured = config.get("useWanApi") is True and config.get("runtimeWanApi") is True
     return {
         "songFolder": song_folder,
         "canFetch": has_http_get,
@@ -63,7 +61,8 @@ def main() -> int:
             "unzipFile": marker,
             "listFiles": marker,
             "openUrl": marker,
-            "voteApiKey": "consumer-key",
+            "useWanApi": True,
+            "runtimeWanApi": True,
         }
     )
     assert hooked["canFetch"] is True
@@ -72,16 +71,6 @@ def main() -> int:
     assert hooked["canExtractZip"] is True
     assert hooked["canScanInstalled"] is True
     assert hooked["canVote"] is True
-
-    wan = capabilities(
-        {
-            "allowShell": False,
-            "httpRequest": marker,
-            "useWanApi": True,
-            "wanApiScoreEndpoint": "https://api.ragnacustoms.com/wanapi/score/game-key",
-        }
-    )
-    assert wan["canVote"] is True
 
     implicit = capabilities({"allowShell": False, "httpRequest": marker})
     assert implicit["canVote"] is False

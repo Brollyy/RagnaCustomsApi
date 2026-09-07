@@ -20,12 +20,6 @@ def derive(score_endpoint: str) -> str:
     return f"{scheme}://{host}{path}/vote"
 
 
-def endpoint_from_key(base_url: str, api_key: str) -> str:
-    if not re.fullmatch(r"[A-Za-z0-9._~-]+", api_key):
-        raise ValueError("invalid API key")
-    return derive(f"{base_url.rstrip('/')}/{api_key}")
-
-
 def redact(endpoint: str) -> str:
     return re.sub(r"(/wanapi/score/)[^/?#]+", r"\1[redacted]", endpoint)
 
@@ -37,16 +31,6 @@ def main() -> int:
     assert derive("http://127.0.0.1:18080/wanapi/score/local-key/") == (
         "http://127.0.0.1:18080/wanapi/score/local-key/vote"
     )
-    assert endpoint_from_key("https://api.ragnacustoms.com/wanapi/score", "consumer-key") == (
-        "https://api.ragnacustoms.com/wanapi/score/consumer-key/vote"
-    )
-    for invalid_key in ["", "key/with/slash", "key?query"]:
-        try:
-            endpoint_from_key("https://api.ragnacustoms.com/wanapi/score", invalid_key)
-        except ValueError:
-            pass
-        else:
-            raise AssertionError(f"accepted invalid API key: {invalid_key}")
     for invalid in [
         "http://api.ragnacustoms.com/wanapi/score/secret",
         "https://api.ragnacustoms.com/vote/secret",
@@ -95,10 +79,7 @@ def main() -> int:
         "function Api.deriveVoteEndpoint",
         "function Api.redactEndpoint",
         "[redacted]",
-        "voteApiKey",
         "useWanApi",
-        "wanApiScoreEndpoint",
-        "scoreEndpointFromApiKey",
         "resolveVoteScoreEndpoint",
     ]:
         assert expected in source, f"missing vote client behavior: {expected}"
@@ -107,7 +88,7 @@ def main() -> int:
     assert "SetRequestObject" not in source
     assert "voteEndpointTemplate" not in source
     assert "options.scoreEndpoint" not in source
-    assert "wanApiScoreEndpoint requires useWanApi=true" in source
+    assert "WanApi voting is disabled; configure useWanApi=true" in source
     print("vote endpoint contract ok")
     return 0
 

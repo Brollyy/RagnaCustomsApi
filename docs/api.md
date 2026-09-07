@@ -25,12 +25,9 @@ Supported options:
     scriptDir = nil,
     win64Dir = nil,
     gameDir = nil,
-    apiKey = nil, -- optional RagnaCustoms download API key
+    apiKey = nil, -- consumer API key for authenticated /api and download endpoints
     headers = {},
-    voteApiBaseUrl = "https://api.ragnacustoms.com/wanapi/score",
-    voteApiKey = nil, -- consumer-owned key; required for the default api-key mode
     useWanApi = false, -- opt in to the game's configured /wanapi/score/{key} contract
-    wanApiScoreEndpoint = nil, -- explicit /wanapi endpoint, primarily for controlled tests
     gameConfigPath = nil,
     httpGet = nil,
     httpPost = nil,
@@ -300,8 +297,8 @@ Installed entry shape:
 ## Voting
 
 ```lua
--- Normal mode: the consumer supplies its own RC API key.
-RagnaCustoms.configure({ voteApiKey = "your-consumer-key" })
+-- Configure the single consumer-owned RC API key for authenticated /api endpoints.
+RagnaCustoms.configure({ apiKey = "your-consumer-key" })
 
 -- Optional canonical in-game mode: discover CustomApiURLs from the game/config.
 RagnaCustoms.configure({ useWanApi = true })
@@ -315,4 +312,4 @@ RagnaCustoms.setVote(beatmapHash, "down", function(result) end)
 RagnaCustoms.clearVote(beatmapHash, function(result) end)
 ```
 
-Voting is opt-in to an explicit endpoint policy. By default, consumers must provide `voteApiKey`; the library builds `/wanapi/score/{voteApiKey}/vote` from `voteApiBaseUrl`. Consumers may instead set `useWanApi = true` to use the game's configured `CustomApiURLs` / `/wanapi/score/{key}` contract. `wanApiScoreEndpoint` is an explicit endpoint for controlled tests and is only honored in WAN API mode. VaRest requests are asynchronous, desired-state PUTs are retry-safe, stale replies are ignored, and exposed endpoint strings redact the API-key segment.
+Voting uses the server-known `/wanapi/score/{apiKey}/vote` endpoints. Set `useWanApi = true` to opt in; the library then reads `CustomApiURLs` from the game instance or `Game.ini` and does not require a second API-key setting. The existing single `apiKey` option is used for authenticated `/api` and download endpoints. VaRest requests are asynchronous, desired-state PUTs are retry-safe, stale replies are ignored, and exposed endpoint strings redact the API-key segment.

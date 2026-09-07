@@ -51,6 +51,12 @@ def main() -> int:
         'managerName:find("/Engine/Transient.", 1, true)',
         "Reflected GameInstance getters are game-thread calls",
         "state.lastSettingPanelPath ~= panelPathForProbe",
+        "local geometry = { x = 650, y = 280, width = 108, height = 112 }",
+        'surface:SetVisibility(3)',
+        'text:SetFontSize(26)',
+        'text:SetFontSize(22)',
+        'local upCount = makeCountLabel',
+        'local downCount = makeCountLabel',
     ]:
         assert expected in source, f"missing Results UI behavior: {expected}"
     assert "OnClicked:Add" not in source

@@ -147,10 +147,9 @@ RagnaCustoms.setRuntimePaths({
 
 ```bash
 python3 scripts/package.py --output dist/RagnaCustomsApi.rmod
-dotnet run --project /path/to/RagnaModManager/src/ui/RagnaModManager.Cli -- import dist/RagnaCustomsApi.rmod
 ```
 
-RagnaModManager owns deployment into the active UE4SS layout and updates `mods.txt`.
+For installation and deployment, see the [RagnaModManager application repository](https://github.com/Brollyy/RagnaModManager).
 
 Use `scripts/probe_api.py` as an optional live network check when you want to verify that the RagnaCustoms endpoints still match the library assumptions:
 

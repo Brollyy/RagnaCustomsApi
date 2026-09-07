@@ -47,7 +47,7 @@ installed_current: yes
 If `ue4ss_present` is `no`, the mod can be installed and enabled in `Mods/mods.txt`, but Ragnarock will not execute UE4SS Lua mods yet. Install UE4SS into `Ragnarock/Ragnarock/Binaries/Win64` first, then launch the game and check `UE4SS.log` for:
 
 ```text
-[RagnaCustomsApi] loaded 0.2.0
+[RagnaCustomsApi] loaded 0.3.0
 ```
 
 Or run:

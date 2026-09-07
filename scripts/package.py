@@ -10,7 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 MOD_NAME = "RagnaCustomsApi"
 MOD_ID = "ragnacustoms-api"
 SOURCE_MOD = ROOT / "Mods" / MOD_NAME
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 ARCHIVE_DATE = (1980, 1, 1, 0, 0, 0)
 
 

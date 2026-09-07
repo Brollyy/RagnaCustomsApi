@@ -1,5 +1,5 @@
 local Api = {
-    VERSION = "0.2.0",
+    VERSION = "0.3.0",
 }
 
 local state = {
@@ -20,7 +20,10 @@ local state = {
         gameDir = nil,
         apiKey = nil,
         headers = {},
-        scoreEndpoint = nil,
+        voteApiBaseUrl = "https://api.ragnacustoms.com/wanapi/score",
+        voteApiKey = nil,
+        useWanApi = false,
+        wanApiScoreEndpoint = nil,
         gameConfigPath = nil,
         httpRequest = nil,
         httpGet = nil,
@@ -282,6 +285,26 @@ local function deriveVoteEndpoint(scoreEndpoint)
         return nil, "configured custom leaderboard endpoint must end with /wanapi/score/{apiKey}"
     end
     return endpoint:gsub("/+$", "") .. "/vote", nil
+end
+
+local function scoreEndpointFromApiKey(apiKey)
+    local key = trim(apiKey)
+    if key == "" then
+        return nil, "voteApiKey is required unless useWanApi is enabled"
+    end
+    if key:match("^[A-Za-z0-9._~-]+$") == nil then
+        return nil, "voteApiKey contains characters that are not valid in a URL path"
+    end
+    local base = trim(state.config.voteApiBaseUrl)
+    if base == "" then
+        return nil, "voteApiBaseUrl is required when voteApiKey is configured"
+    end
+    local endpoint = base:gsub("/+$", "") .. "/" .. key
+    local valid, validationError = deriveVoteEndpoint(endpoint)
+    if valid == nil then
+        return nil, validationError
+    end
+    return endpoint, nil
 end
 
 local function parseVoteResponse(content)
@@ -1013,9 +1036,9 @@ end
 function Api.getConfig()
     local copy = {}
     for key, value in pairs(state.config) do
-        if key == "scoreEndpoint" and value ~= nil then
+        if (key == "wanApiScoreEndpoint") and value ~= nil then
             copy[key] = redactEndpoint(value)
-        elseif key ~= "apiKey" then
+        elseif key ~= "apiKey" and key ~= "voteApiKey" then
             copy[key] = value
         end
     end
@@ -1023,7 +1046,10 @@ function Api.getConfig()
 end
 
 function Api.discoverScoreEndpoint()
-    local configured = state.config.scoreEndpoint
+    if state.config.useWanApi ~= true then
+        return setError("/wanapi discovery is opt-in; configure voteApiKey or set useWanApi=true")
+    end
+    local configured = state.config.wanApiScoreEndpoint
     if configured ~= nil and configured ~= "" and deriveVoteEndpoint(configured) ~= nil then
         return configured
     end
@@ -1031,7 +1057,7 @@ function Api.discoverScoreEndpoint()
     if endpoint == nil then
         return setError("configured custom leaderboard score endpoint was not found")
     end
-    state.config.scoreEndpoint = endpoint
+    state.config.wanApiScoreEndpoint = endpoint
     emit("vote.endpoint.discovered", { endpoint = redactEndpoint(endpoint) })
     return endpoint
 end
@@ -1095,7 +1121,12 @@ function Api.getCapabilities()
     local hasUnzip = type(state.config.unzipFile) == "function" or hasShell
     local hasListFiles = type(state.config.listFiles) == "function" or hasShell
     local hasOpenUrl = type(state.config.openUrl) == "function"
-    local scoreEndpoint = state.config.scoreEndpoint or scoreEndpointFromRuntime() or scoreEndpointFromConfig()
+    local scoreEndpoint = nil
+    if state.config.useWanApi == true then
+        scoreEndpoint = state.config.wanApiScoreEndpoint or scoreEndpointFromRuntime() or scoreEndpointFromConfig()
+    else
+        scoreEndpoint = scoreEndpointFromApiKey(state.config.voteApiKey)
+    end
     local canVote = scoreEndpoint ~= nil and deriveVoteEndpoint(scoreEndpoint) ~= nil and hasHttpRequest
 
     return {
@@ -1129,6 +1160,7 @@ function Api.getCapabilities()
         canVote = canVote,
         voteConfigured = scoreEndpoint ~= nil and deriveVoteEndpoint(scoreEndpoint) ~= nil,
         scoreEndpoint = scoreEndpoint and redactEndpoint(scoreEndpoint) or nil,
+        voteMode = state.config.useWanApi == true and "wanapi" or "api-key",
     }
 end
 
@@ -1808,6 +1840,30 @@ local function completeVoteCallback(callback, payload)
     end
 end
 
+local function resolveVoteScoreEndpoint(options)
+    options = options or {}
+    if options.wanApiScoreEndpoint ~= nil and options.useWanApi ~= true then
+        return nil, "wanApiScoreEndpoint requires useWanApi=true"
+    end
+    if options.useWanApi == true then
+        if options.wanApiScoreEndpoint ~= nil then
+            local endpoint, endpointError = deriveVoteEndpoint(options.wanApiScoreEndpoint)
+            if endpoint == nil then
+                return nil, endpointError
+            end
+            return options.wanApiScoreEndpoint, nil
+        end
+        return Api.discoverScoreEndpoint()
+    end
+    if options.voteApiKey ~= nil then
+        return scoreEndpointFromApiKey(options.voteApiKey)
+    end
+    if state.config.useWanApi == true then
+        return Api.discoverScoreEndpoint()
+    end
+    return scoreEndpointFromApiKey(state.config.voteApiKey)
+end
+
 local function performVoteRequest(method, beatmap, direction, callback, options)
     options = options or {}
     local cleanBeatmap = trim(beatmap)
@@ -1818,9 +1874,9 @@ local function performVoteRequest(method, beatmap, direction, callback, options)
         return setError("vote direction must be 'up', 'down', or nil")
     end
 
-    local scoreEndpoint = options.scoreEndpoint or Api.discoverScoreEndpoint()
+    local scoreEndpoint, scoreEndpointError = resolveVoteScoreEndpoint(options)
     if scoreEndpoint == nil then
-        return nil, Api.lastError()
+        return setError(scoreEndpointError or Api.lastError())
     end
     local voteEndpoint, endpointError = deriveVoteEndpoint(scoreEndpoint)
     if voteEndpoint == nil then

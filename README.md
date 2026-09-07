@@ -184,11 +184,12 @@ Use `RagnaCustoms.on("*", callback)` to observe all events. Use `RagnaCustoms.of
 
 ## Voting
 
-Voting derives `/vote` from Ragnarock's existing configured `/wanapi/score/{apiKey}` endpoint. It first asks the live game for `GetCustomApiURLs`, then falls back to the local `Game.ini`. A direct `scoreEndpoint` override exists for guarded loopback tests; cleartext non-loopback URLs are rejected.
+Voting defaults to a consumer-owned `voteApiKey`, which is combined with `voteApiBaseUrl` to form the `/wanapi/score/{key}/vote` route. Consumers that want Ragnarock's canonical in-game contract must explicitly set `useWanApi = true`; only then does the library inspect `GetCustomApiURLs` or `Game.ini`. `wanApiScoreEndpoint` is available for controlled loopback tests. Cleartext non-loopback URLs are rejected.
 
 ```lua
 RagnaCustoms.configure({
-    scoreEndpoint = "http://127.0.0.1:18080/wanapi/score/local-test-key",
+    useWanApi = true,
+    wanApiScoreEndpoint = "http://127.0.0.1:18080/wanapi/score/local-test-key",
 })
 
 RagnaCustoms.getVote(beatmapHash, function(result) end)

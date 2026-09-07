@@ -25,9 +25,12 @@ Supported options:
     scriptDir = nil,
     win64Dir = nil,
     gameDir = nil,
-    apiKey = nil,
+    apiKey = nil, -- optional RagnaCustoms download API key
     headers = {},
-    scoreEndpoint = nil, -- normally discovered from the game's CustomApiURLs
+    voteApiBaseUrl = "https://api.ragnacustoms.com/wanapi/score",
+    voteApiKey = nil, -- consumer-owned key; required for the default api-key mode
+    useWanApi = false, -- opt in to the game's configured /wanapi/score/{key} contract
+    wanApiScoreEndpoint = nil, -- explicit /wanapi endpoint, primarily for controlled tests
     gameConfigPath = nil,
     httpGet = nil,
     httpPost = nil,
@@ -297,6 +300,11 @@ Installed entry shape:
 ## Voting
 
 ```lua
+-- Normal mode: the consumer supplies its own RC API key.
+RagnaCustoms.configure({ voteApiKey = "your-consumer-key" })
+
+-- Optional canonical in-game mode: discover CustomApiURLs from the game/config.
+RagnaCustoms.configure({ useWanApi = true })
 local scoreEndpoint = RagnaCustoms.discoverScoreEndpoint()
 local voteEndpoint = RagnaCustoms.deriveVoteEndpoint(scoreEndpoint)
 local safeForLogs = RagnaCustoms.redactEndpoint(scoreEndpoint)
@@ -307,4 +315,4 @@ RagnaCustoms.setVote(beatmapHash, "down", function(result) end)
 RagnaCustoms.clearVote(beatmapHash, function(result) end)
 ```
 
-The vote endpoint is the `/vote` child of the exact configured `/wanapi/score/{apiKey}` base. VaRest requests are asynchronous, desired-state PUTs are retry-safe, stale replies are ignored, and exposed endpoint strings redact the API-key segment.
+Voting is opt-in to an explicit endpoint policy. By default, consumers must provide `voteApiKey`; the library builds `/wanapi/score/{voteApiKey}/vote` from `voteApiBaseUrl`. Consumers may instead set `useWanApi = true` to use the game's configured `CustomApiURLs` / `/wanapi/score/{key}` contract. `wanApiScoreEndpoint` is an explicit endpoint for controlled tests and is only honored in WAN API mode. VaRest requests are asynchronous, desired-state PUTs are retry-safe, stale replies are ignored, and exposed endpoint strings redact the API-key segment.

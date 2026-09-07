@@ -146,7 +146,7 @@ def main() -> int:
         assert "Scripts/main.lua" in names
         assert "Scripts/ragnacustoms_api.lua" in names
         assert package_manifest["id"] == "ragnacustoms-api"
-        assert package_manifest["version"] == "0.2.0"
+        assert package_manifest["version"] == "0.3.0"
         assert package_manifest["files"] == [
             {"type": "ue4ss-lua", "source": "Scripts/", "modFolder": "RagnaCustomsApi"}
         ]

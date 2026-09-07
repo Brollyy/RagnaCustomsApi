@@ -30,6 +30,11 @@ def legacy_mods_dir(win64: Path) -> Path:
 
 
 def select_mods_dir(win64: Path) -> Path:
+    # RagnaModManager gives the root/proxy-loaded layout precedence when both
+    # UE4SS.dll locations exist. Keep this verifier aligned with that runtime
+    # selection instead of inspecting a dormant second Mods tree.
+    if (win64 / "UE4SS.dll").exists():
+        return legacy_mods_dir(win64)
     manager = manager_mods_dir(win64)
     if (manager / MOD_NAME).exists() or (manager / "mods.txt").exists():
         return manager
@@ -99,7 +104,10 @@ def main() -> int:
     checks = {
         "win64_dir": win64.exists(),
         "ue4ss_present": bool(markers),
-        "manager_mods_layout": mods == manager_mods_dir(win64),
+        # RagnaModManager supports both UE4SS layouts; this key is retained
+        # for compatibility with existing diagnostics and means the selected
+        # path is a supported manager deployment target.
+        "manager_mods_layout": mods in (manager_mods_dir(win64), legacy_mods_dir(win64)),
         "mods_txt": mods_txt.exists(),
         "mod_enabled": mods_txt_enabled(mods_txt),
         "main_lua": main_lua.exists(),
@@ -120,6 +128,7 @@ def main() -> int:
     for key, value in checks.items():
         print(f"{key}: {'yes' if value else 'no'}")
     print(f"mods_dir: {mods}")
+    print(f"active_layout: {'legacy-exe-folder' if mods == legacy_mods_dir(win64) else 'modern-ue4ss-subfolder'}")
     if markers:
         print(f"ue4ss_markers: {', '.join(markers)}")
     if args.source_root and not checks["installed_current"]:

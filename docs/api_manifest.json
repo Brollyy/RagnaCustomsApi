@@ -1,6 +1,6 @@
 {
   "modId": "RagnaCustomsApi",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "globals": [
     "RagnaCustomsApi",
     "RagnaCustoms"
@@ -165,6 +165,21 @@
       "name": "downloadSong",
       "category": "install",
       "signature": "downloadSong(songOrId, options)"
+    },
+    {
+      "name": "getWanApiVote",
+      "category": "wanapi",
+      "signature": "getWanApiVote(beatmap, callback, options)"
+    },
+    {
+      "name": "setWanApiVote",
+      "category": "wanapi",
+      "signature": "setWanApiVote(beatmap, direction, callback, options)"
+    },
+    {
+      "name": "clearWanApiVote",
+      "category": "wanapi",
+      "signature": "clearWanApiVote(beatmap, callback, options)"
     },
     {
       "name": "vote",

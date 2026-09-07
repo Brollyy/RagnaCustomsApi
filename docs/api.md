@@ -25,11 +25,13 @@ Supported options:
     scriptDir = nil,
     win64Dir = nil,
     gameDir = nil,
-    apiKey = nil,
+    apiKey = nil, -- consumer API key for authenticated API, download, and website/app vote endpoints
     headers = {},
-    voteEndpointTemplate = nil,
+    useWanApi = false, -- opt in to the game's configured /wanapi/score/{key} contract
+    gameConfigPath = nil,
     httpGet = nil,
     httpPost = nil,
+    httpRequest = nil,
     downloadFile = nil,
     unzipFile = nil,
     openUrl = nil,
@@ -141,14 +143,13 @@ RagnaCustoms.setRuntimePaths({
 })
 ```
 
-## Install The Mod
+## Package And Install The Mod
 
 ```bash
-python3 scripts/install.py --game-dir "/path/to/steamapps/common/Ragnarock" --replace
-python3 scripts/package.py --output dist/RagnaCustomsApi.zip
+python3 scripts/package.py --output dist/RagnaCustomsApi.rmod
 ```
 
-The installer copies `Mods/RagnaCustomsApi` into the UE4SS `Mods` directory and enables `RagnaCustomsApi : 1` in `mods.txt`.
+For installation and deployment, see the [RagnaModManager application repository](https://github.com/Brollyy/RagnaModManager).
 
 Use `scripts/probe_api.py` as an optional live network check when you want to verify that the RagnaCustoms endpoints still match the library assumptions:
 
@@ -294,10 +295,23 @@ Installed entry shape:
 
 ## Voting
 
+The usual website/app voting routes use fixed server routes and the caller's authenticated website session. Provide an authenticated `httpPost` transport; the API key alone is not a browser session:
+
 ```lua
-RagnaCustoms.vote(song, "up")
-RagnaCustoms.upvote(song)
-RagnaCustoms.downvote(song)
+RagnaCustoms.configure({
+    httpPost = MyAuthenticatedPost,
+})
+RagnaCustoms.upvote(song) -- POST /song-vote/upvote/<song id>
+RagnaCustoms.downvote(song) -- POST /song-vote/downvote/<song id>
 ```
 
-Voting requires `voteEndpointTemplate`; placeholders `{id}` and `{direction}` are replaced before POST.
+WanApi is a separate opt-in surface. Set `useWanApi = true` when the game has configured `CustomApiURLs`; the library discovers the server-known `/wanapi/score/{apiKey}` route and does not require a second API-key setting:
+
+```lua
+RagnaCustoms.configure({ useWanApi = true })
+RagnaCustoms.getWanApiVote(beatmapHash, function(result) end)
+RagnaCustoms.setWanApiVote(beatmapHash, "up", function(result) end)
+RagnaCustoms.clearWanApiVote(beatmapHash, function(result) end)
+```
+
+WanApi requests use VaRest asynchronously, desired-state PUTs are retry-safe, and stale replies are ignored. Endpoint values remain internal and are redacted in status/events.

@@ -10,7 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 MOD_NAME = "RagnaCustomsApi"
 MOD_ID = "ragnacustoms-api"
 SOURCE_MOD = ROOT / "Mods" / MOD_NAME
-VERSION = "0.1.0"
+from version import VERSION
+ARCHIVE_DATE = (1980, 1, 1, 0, 0, 0)
 
 
 def manifest() -> dict:
@@ -19,44 +20,16 @@ def manifest() -> dict:
         "id": MOD_ID,
         "name": MOD_NAME,
         "version": VERSION,
-        "author": "RagnaCustomsApi contributors",
+        "author": "Brollyy",
         "game": "ragnarock",
-        "description": "UE4SS Lua library exposing RagnaCustoms catalog, install, and UI helpers to other mods.",
+        "description": "Reusable async client for the configured RagnaCustoms leaderboard API.",
         "requires": {
-            "manager": ">=1.0.0",
+            "manager": ">=1.1.0",
         },
+        "dependencies": {},
         "conflicts": [],
         "files": [
-            {
-                "type": "ue4ss-lua",
-                "source": "Manager",
-                "modFolder": MOD_NAME,
-            },
-            {
-                "type": "config",
-                "source": "Scripts/main.lua",
-                "target": f"Mods/{MOD_NAME}/Scripts/main.lua",
-            },
-            {
-                "type": "config",
-                "source": "Scripts/ragnacustoms_api.lua",
-                "target": f"Mods/{MOD_NAME}/Scripts/ragnacustoms_api.lua",
-            },
-            {
-                "type": "loose-file",
-                "source": "Scripts/main.lua",
-                "target": f"Ragnarock/Binaries/Win64/Mods/{MOD_NAME}/Scripts/main.lua",
-            },
-            {
-                "type": "loose-file",
-                "source": "Scripts/ragnacustoms_api.lua",
-                "target": f"Ragnarock/Binaries/Win64/Mods/{MOD_NAME}/Scripts/ragnacustoms_api.lua",
-            },
-            {
-                "type": "loose-file",
-                "source": "Manager/legacy_mods.txt",
-                "target": "Ragnarock/Binaries/Win64/Mods/mods.txt",
-            },
+            {"type": "ue4ss-lua", "source": "Scripts/", "modFolder": MOD_NAME},
         ],
         "affects": [],
         "hooks": [],
@@ -66,12 +39,16 @@ def manifest() -> dict:
 def package_mod(output: Path) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("manifest.json", json.dumps(manifest(), indent=2) + "\n")
-        archive.writestr("Manager/enable.txt", "RagnaCustomsApi manager enablement marker\n")
-        archive.writestr("Manager/legacy_mods.txt", f"{MOD_NAME} : 1\n")
+        manifest_info = zipfile.ZipInfo("manifest.json", date_time=ARCHIVE_DATE)
+        manifest_info.compress_type = zipfile.ZIP_DEFLATED
+        manifest_info.external_attr = 0o100644 << 16
+        archive.writestr(manifest_info, json.dumps(manifest(), indent=2, sort_keys=True) + "\n")
         for path in sorted(SOURCE_MOD.rglob("*")):
             if path.is_file():
-                archive.write(path, path.relative_to(SOURCE_MOD))
+                info = zipfile.ZipInfo(path.relative_to(SOURCE_MOD).as_posix(), date_time=ARCHIVE_DATE)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                info.external_attr = 0o100644 << 16
+                archive.writestr(info, path.read_bytes())
 
 
 def main() -> int:

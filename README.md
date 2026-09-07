@@ -1,32 +1,17 @@
 # RagnaCustomsApi
 
-Standalone UE4SS Lua library mod for exposing RagnaCustoms song discovery and install helpers to other Ragnarock mods.
+UE4SS Lua library mod for consuming RagnaCustoms API - song catalog, download, voting etc. to simplify development for other Ragnarock mods.
 
-Build a RagnaModManager package:
+Build the package:
 
 ```bash
 python3 scripts/package.py --output dist/RagnaCustomsApi.rmod
 python3 scripts/verify_release.py --package dist/RagnaCustomsApi.rmod
 ```
 
-Install it through RagnaModManager:
+For installation and deployment, see the [RagnaModManager application repository](https://github.com/Brollyy/RagnaModManager).
 
-```bash
-python3 scripts/install_rmod.py \
-  --package dist/RagnaCustomsApi.rmod \
-  --manager-cli "/path/to/RagnaModManager" \
-  --game-dir "/path/to/steamapps/common/Ragnarock"
-python3 scripts/check_install.py --game-dir "/path/to/steamapps/common/Ragnarock" --source-root .
-```
-
-The `.rmod` archive contains a root `manifest.json`, a small `Manager/` marker declared as `ue4ss-lua` with `modFolder` set to `RagnaCustomsApi`, and explicit manager-deployed compatibility entries for both UE4SS layouts seen locally:
-
-```text
-Ragnarock/Binaries/Win64/ue4ss/Mods/RagnaCustomsApi/Scripts/*.lua
-Ragnarock/Binaries/Win64/Mods/RagnaCustomsApi/Scripts/*.lua
-```
-
-The marker lets RagnaModManager enable the mod in `mods.txt`; the uppercase `Scripts` targets match the folder used by the bundled UE4SS Lua mods. RagnaModManager imports the package into its local library, enables `ragnacustoms-api`, and deploys the Lua files into UE4SS.
+The `.rmod` is the distributable library package: it contains a root manifest and this mod's `Scripts/` tree. Other `.rmod`-packaged mods can declare it as a runtime dependency.
 
 Optionally probe the live RagnaCustoms endpoints used by the library:
 
@@ -40,7 +25,7 @@ Run the full offline verification suite:
 python3 scripts/run_checks.py
 ```
 
-`scripts/install.py` remains available for manual direct UE4SS installs, but release and deployment verification use the RagnaModManager `.rmod` path.
+This repository only builds and verifies the `.rmod` package.
 
 ## Public Surface
 
@@ -111,7 +96,7 @@ Song objects normalize fields needed by UI mods:
 
 The library prefers the official app API (`https://api.ragnacustoms.com/api/search/<term>`, `https://api.ragnacustoms.com/api/song/<id>`, `https://api.ragnacustoms.com/api/song/check-updates`, and `https://api.ragnacustoms.com/api/song-list/<id>`) and falls back to public web-page parsing where needed.
 
-For display code, `toUiSong(song)` projects normalized song data into UI-ready strings such as `subtitle`, `artistText`, `difficultyText`, `durationText`, `voteText`, `installText`, and resolved install/download URLs. Install state is tri-state, so `installText` is `"Unknown"` until the installed-song cache has been scanned. `toUiSongs(songs)` maps a list through the same projection. `searchUi(query)` and `getSongUi(songOrId)` compose search/detail lookup with that projection for consumer list and detail screens.
+The UI helpers turn normalized song data into stable display rows. `toUiSong` adds formatted title, artist, difficulty, duration, vote, install-state, and URL fields; `toUiSongs`, `searchUi`, and `getSongUi` apply the same projection to lists and details.
 
 Use `getCapabilities()` before rendering consumer UI actions. It reports whether the current configuration can fetch the API, open one-click links, download/extract zips, scan installed songs, or vote.
 
@@ -130,13 +115,26 @@ Use `scanInstalledSongs()` to inspect the resolved `CustomSongs` folder. Downloa
 
 ## Transport Hooks
 
-UE4SS Lua builds differ. The default transport uses shell `curl` and `unzip` through `io.popen`, but callers can inject safer runtime-specific hooks:
+The library supports these transport hooks:
+
+- `httpGet`: catalog, search, detail, update, and song-list reads.
+- `httpPost`: authenticated website/app voting routes (`/song-vote/upvote/<id>` and `/song-vote/downvote/<id>`).
+- `httpRequest`: asynchronous WanApi voting through Ragnarock's bundled VaRest plugin.
+- `downloadFile` and `unzipFile`: song downloads and extraction.
+- `mkdirs`, `listFiles`, `readFile`, and `writeFile`: local song-folder discovery and install metadata.
+- `openUrl`: optional `ragnac://install/<id>` launching.
+
+Consumers can inject the callback-shaped hooks when shell or VaRest transports are unavailable:
 
 ```lua
 RagnaCustoms.configure({
     allowShell = false,
     httpGet = function(url, config)
         return MyHttpGet(url)
+    end,
+    httpRequest = function(method, url, body, callback, config)
+        MyAsyncRequest(method, url, body, callback)
+        return "request-id"
     end,
     downloadFile = function(url, destination, config)
         return MyDownload(url, destination)
@@ -182,23 +180,32 @@ Use `RagnaCustoms.on("*", callback)` to observe all events. Use `RagnaCustoms.of
 
 ## Voting
 
-`upvote`, `downvote`, and `vote` are exposed, but RagnaCustoms voting is tied to authenticated site/app state and may require a played-song entitlement. Configure the endpoint template and headers/API key for the authenticated environment you are integrating with:
+The library supports both server-known voting surfaces. The usual website/app routes take a numeric song id and require the caller's authenticated website session. Supply an `httpPost` hook that provides that session; the route paths are fixed by the library and are not configurable. The single `apiKey` remains available for authenticated API/download requests.
 
 ```lua
 RagnaCustoms.configure({
-    apiKey = "optional-key",
-    headers = {
-        Cookie = "optional-auth-cookie",
-    },
-    voteEndpointTemplate = "/your/vote/route/{id}/{direction}",
+    apiKey = "your-consumer-key",
+    httpPost = MyAuthenticatedPost,
 })
-
-RagnaCustoms.upvote(6037)
-RagnaCustoms.downvote(6037)
+RagnaCustoms.upvote(song)
+RagnaCustoms.downvote(song)
 ```
 
-Without `voteEndpointTemplate`, vote calls fail explicitly instead of guessing a private route.
+Mods that use the in-game WanApi contract can opt in by name. The game must provide `CustomApiURLs`; the mod does not need a second API-key setting.
+
+```lua
+RagnaCustoms.configure({
+    useWanApi = true,
+})
+
+RagnaCustoms.getWanApiVote(beatmapHash, function(result) end)
+RagnaCustoms.setWanApiVote(beatmapHash, "up", function(result) end)
+RagnaCustoms.setWanApiVote(beatmapHash, "down", function(result) end)
+RagnaCustoms.clearWanApiVote(beatmapHash, function(result) end)
+```
+
+Callbacks receive `{ ok = true, state = { currentVote, upvotes, downvotes, ... } }` or `{ ok = false, error = { code, message } }`. Requests are generation-checked so an older response cannot overwrite a newer selection. Endpoint values are kept internal and redacted in status/events.
 
 ## Notes
 
-The current implementation is API-first for preload, search, details, song lists, update checks, and downloads. Public RagnaCustoms HTML parsing remains as a fallback for list/detail fields that are only available on site pages or when callers force `{ html = true }`. `baseUrl`, `apiBaseUrl`, transport hooks, and vote routes are configurable so consumer mods do not need to change when runtime transport or endpoint details change.
+The current implementation is API-first for preload, search, details, song lists, update checks, and downloads. Public RagnaCustoms HTML parsing remains as a fallback for list/detail fields that are only available on site pages or when callers force `{ html = true }`. `baseUrl`, `apiBaseUrl`, and transport hooks are configurable; server-known vote routes are intentionally not consumer-configurable.

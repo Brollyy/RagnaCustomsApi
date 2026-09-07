@@ -204,6 +204,7 @@ local function rootPath(panelName)
 end
 
 local function findCanvas(panel, panelPath, mode)
+    -- The widget-tree root is the stable owner for newly-created TextBlocks.
     local tree = safeCall(function()
         return panel.WidgetTree
     end, nil)
@@ -216,6 +217,25 @@ local function findCanvas(panel, panelPath, mode)
             log("info", "Results root candidate " .. fullName(root))
         end
         return root, tree
+    end
+    -- Fall back to the specific visible content canvas if the root is not
+    -- CanvasPanel-like on a different UI build.
+    if type(FindAllOf) == "function" then
+        local candidates = safeCall(function() return FindAllOf("CanvasPanel") end, {})
+        for _, candidate in ipairs(candidates or {}) do
+            local name = fullName(candidate)
+            if valid(candidate)
+                and visible(candidate)
+                and name:find(tostring(panelPath or ""), 1, true) ~= nil
+                and name:find("FlatItem_SongInfoEnd.WidgetTree.CanvasPanel", 1, true) ~= nil
+                and name:find("FlatLeaderboard_C_", 1, true) == nil then
+                if not state.diagnostics.resultsCanvas then
+                    state.diagnostics.resultsCanvas = true
+                    log("info", "Results content canvas candidate " .. name)
+                end
+                return candidate
+            end
+        end
     end
     return nil
 end
@@ -246,43 +266,10 @@ local function setText(widget, value)
         return false
     end
     local text = tostring(value or "")
-    local applied = safeCall(function()
-        if type(FText) == "function" then
-            widget:SetText(FText(text))
-        else
-            widget:SetText(text)
-        end
-        return true
-    end, false)
-    if applied then
-        return true
-    end
     return safeCall(function()
-        widget:SetPropertyValue("Text", text)
+        widget:SetText(FText(text))
         return true
     end, false)
-end
-
--- Direct property import avoids the blocking SetText wrapper observed on
--- freshly-constructed TextBlocks in this UE4 build.
-local function setTextProperty(widget, value)
-    if not valid(widget) then return false end
-    return safeCall(function()
-        widget:SetPropertyValue("Text", tostring(value or ""))
-        return true
-    end, false)
-end
-
-local function setColor(widget, color)
-    safeCall(function()
-        widget:SetColorAndOpacity(color)
-    end, nil)
-    safeCall(function()
-        widget:SetBackgroundColor(color)
-    end, nil)
-    safeCall(function()
-        widget:SetBrushColor(color)
-    end, nil)
 end
 
 local function addToCanvas(canvas, widget, geometry)
@@ -292,6 +279,35 @@ local function addToCanvas(canvas, widget, geometry)
     if not valid(slot) then
         return false
     end
+    local function configure(targetSlot)
+        targetSlot:SetAutoSize(false)
+        targetSlot:SetPosition({ X = geometry.x, Y = geometry.y })
+        targetSlot:SetSize({ X = geometry.width, Y = geometry.height })
+        targetSlot:SetZOrder(geometry.z or 9000)
+    end
+    safeCall(function() configure(slot) end, nil)
+    -- On this build the returned slot can be a stale wrapper.
+    -- The widget's live Slot property is the stable path.
+    safeCall(function()
+        local liveSlot = widget.Slot
+        if valid(liveSlot) then configure(liveSlot) end
+    end, nil)
+    safeCall(function() widget:SetVisibility(0) end, nil)
+    safeCall(function() widget:ForceVolatile(true) end, nil)
+    safeCall(function() widget:SetRenderOpacity(1.0) end, nil)
+    safeCall(function() widget:InvalidateLayoutAndVolatility() end, nil)
+    safeCall(function() widget:SynchronizeProperties() end, nil)
+    safeCall(function() canvas:InvalidateLayoutAndVolatility() end, nil)
+    return true
+end
+
+-- Stock FlatInGameButton widgets use a minimal slot setup; extra
+-- post-attachment mutations can suppress painting in the Results hierarchy.
+local function addButtonToCanvas(canvas, widget, geometry)
+    local slot = safeCall(function()
+        return canvas:AddChildToCanvas(widget)
+    end, nil)
+    if not valid(slot) then return false end
     safeCall(function()
         slot:SetAutoSize(false)
         slot:SetPosition({ X = geometry.x, Y = geometry.y })
@@ -366,18 +382,57 @@ local function makeButton(canvas, context, mode, label, geometry)
     local childOk, child = pcall(function()
         return root:GetPropertyValue(textProperty)
     end)
-    log("info", "vote button child resolved label=" .. tostring(label))
-    -- The stock child is intentionally never mutated. Calling SetText on this
-    -- blueprint's transient label can block the Results construction thread;
-    -- visible labels are supplied by the mod-owned TextBlocks below.
-    if not addToCanvas(canvas, root, geometry) then
+    local childClass = valid(child) and safeCall(function()
+        return child:GetClass():GetFullName()
+    end, "unknown") or "nil"
+    local childVisible = valid(child) and safeCall(function() return child:IsVisible() end, false) or false
+    log("info", "vote button child resolved label=" .. tostring(label)
+        .. " valid=" .. tostring(valid(child))
+        .. " class=" .. tostring(childClass)
+        .. " visible=" .. tostring(childVisible))
+    if valid(child) then
+        if not setText(child, label) then
+            log("error", "failed to label stock Results button label=" .. tostring(label))
+        else
+            log("info", "stock Results button labeled before attach label=" .. tostring(label))
+        end
+    end
+    local innerButton = nil
+    for _, propertyName in ipairs({ "Button_64", "Button" }) do
+        local candidate = safeCall(function() return root:GetPropertyValue(propertyName) end, nil)
+        if valid(candidate) then
+            innerButton = candidate
+            log("info", "vote button inner target property=" .. propertyName
+                .. " path=" .. objectPath(candidate))
+            break
+        end
+    end
+    safeCall(function()
+        root:SetRenderTransformPivot({ X = 0.0, Y = 0.0 })
+        -- FlatInGameButton's authored content is approximately 300x70;
+        -- scale it to the 96x42 button bounds.
+        root:SetRenderScale({ X = 0.36, Y = 0.6 })
+        root:SetRenderOpacity(1.0)
+    end, nil)
+    if not addButtonToCanvas(canvas, root, geometry) then
         log("error", "failed to attach Results button widget label=" .. tostring(label))
         return nil
     end
+    local function slotDescription(widget)
+        local slot = valid(widget) and safeCall(function() return widget.Slot end, nil) or nil
+        if not valid(slot) then return "invalid-slot" end
+        local position = safeCall(function() return slot:GetPosition() end, nil)
+        local size = safeCall(function() return slot:GetSize() end, nil)
+        return "pos=" .. tostring(position and position.X) .. "," .. tostring(position and position.Y)
+            .. " size=" .. tostring(size and size.X) .. "," .. tostring(size and size.Y)
+    end
+    log("info", "vote button layout root=" .. slotDescription(root)
+        .. " inner=" .. slotDescription(innerButton))
     return {
         root = root,
         label = label,
         button = root,
+        innerButton = innerButton,
         text = child,
         objectPath = objectPath(root),
     }
@@ -390,73 +445,12 @@ local COLORS = {
     disabled = { R = 0.52, G = 0.56, B = 0.62, A = 1.0 },
 }
 
-local function makeVisualButton(canvas, label, geometry, styleSource)
-    local surface = construct("/Script/UMG.Border", canvas)
-    local text = construct("/Script/UMG.TextBlock", nil)
-    if not valid(surface) or not valid(text) then
-        return nil
-    end
-    if not addToCanvas(canvas, surface, geometry) then
-        return nil
-    end
-    if not addToCanvas(canvas, text, {
-        x = geometry.x + 2, y = geometry.y + 2,
-        width = geometry.width - 4, height = geometry.height - 4,
-        z = 1,
-    }) then return nil end
-    setTextProperty(text, label)
-    safeCall(function() text:SetJustification(1) end, nil)
-    safeCall(function() text:SetVerticalAlignment(1) end, nil)
-    -- Do not copy the stock widget's font object: on some builds it is a
-    -- transient Slate value that makes a newly-constructed TextBlock blank.
-    -- The engine default font is stable for both Flat and VR.
-    safeCall(function() text:SetFontSize(26) end, nil)
-    safeCall(function() text:SetRenderOpacity(1.0) end, nil)
-    safeCall(function() text:SetMinDesiredWidth(54.0) end, nil)
-    safeCall(function() text:ForceVolatile(true) end, nil)
-    -- Visual layers must not intercept the invisible stock button hit targets.
-    safeCall(function() surface:SetVisibility(3) end, nil) -- HitTestInvisible
-    safeCall(function() text:SetVisibility(0) end, nil) -- Visible; below hit target
-    -- UE4SS sometimes drops TextBlock state set before attachment.
-    setTextProperty(text, label)
-    safeCall(function() text:InvalidateLayoutAndVolatility() end, nil)
-    safeCall(function() text:SynchronizeProperties() end, nil)
-    setColor(surface, COLORS.normal)
-    safeCall(function() surface:SetRenderOpacity(0.22) end, nil)
-    setColor(text, { R = 1.0, G = 1.0, B = 1.0, A = 1.0 })
-    return { root = surface, surface = surface, text = text }
-end
-
-local function makeCountLabel(canvas, label, geometry, styleSource)
-    -- Keep the TextBlock owned by the target canvas.  A nil outer can produce
-    -- an apparently valid transient object which fails AddToCanvas later.
-    local text = construct("/Script/UMG.TextBlock", canvas)
-    if not valid(text) then
-        return nil
-    end
-    if not addToCanvas(canvas, text, geometry) then
-        return nil
-    end
-    setTextProperty(text, label)
-    safeCall(function() text:SetJustification(1) end, nil)
-    safeCall(function() text:SetVerticalAlignment(1) end, nil)
-    safeCall(function() text:SetFontSize(22) end, nil)
-    safeCall(function() text:SetRenderOpacity(1.0) end, nil)
-    safeCall(function() text:SetMinDesiredWidth(54.0) end, nil)
-    safeCall(function() text:ForceVolatile(true) end, nil)
-    safeCall(function() text:SetVisibility(0) end, nil) -- Visible; below hit target
-    setColor(text, { R = 1.0, G = 1.0, B = 1.0, A = 1.0 })
-    safeCall(function() text:InvalidateLayoutAndVolatility() end, nil)
-    safeCall(function() text:SynchronizeProperties() end, nil)
-    return text
-end
-
 local function removeWidgets()
     local widgets = state.widgets
     if widgets ~= nil then
         for _, entry in pairs(widgets) do
             local candidates = type(entry) == "table"
-                and { entry.root, entry.button, entry.surface, entry.text }
+                and { entry.root, entry.button, entry.text }
                 or { entry }
             for _, widget in ipairs(candidates) do
                 if valid(widget) then
@@ -476,27 +470,16 @@ local function render()
     if widgets == nil then
         return
     end
-    -- Stock hit-target labels are intentionally untouched.
     local upColor = state.currentVote == "up" and COLORS.up or COLORS.normal
     local downColor = state.currentVote == "down" and COLORS.down or COLORS.normal
     safeCall(function() widgets.up.button:SetColorAndOpacity(upColor) end, nil)
     safeCall(function() widgets.down.button:SetColorAndOpacity(downColor) end, nil)
-    setTextProperty(widgets.upVisual.text, "^")
-    setTextProperty(widgets.downVisual.text, "v")
-    setTextProperty(widgets.upCount, tostring(state.upvotes or 0))
-    setTextProperty(widgets.downCount, tostring(state.downvotes or 0))
-    setColor(widgets.upVisual.surface, upColor)
-    setColor(widgets.downVisual.surface, downColor)
-    setColor(widgets.upVisual.text, state.currentVote == "up"
-        and { R = 0.02, G = 0.16, B = 0.04, A = 1.0 }
-        or { R = 1.0, G = 1.0, B = 1.0, A = 1.0 })
-    setColor(widgets.downVisual.text, state.currentVote == "down"
-        and { R = 0.20, G = 0.02, B = 0.02, A = 1.0 }
-        or { R = 1.0, G = 1.0, B = 1.0, A = 1.0 })
     local enabled = state.phase == "ready" or state.phase == "error"
     safeCall(function()
         widgets.up.button:SetIsEnabled(enabled)
         widgets.down.button:SetIsEnabled(enabled)
+        if valid(widgets.up.innerButton) then widgets.up.innerButton:SetIsEnabled(enabled) end
+        if valid(widgets.down.innerButton) then widgets.down.innerButton:SetIsEnabled(enabled) end
     end, nil)
     local status = "Vote for this custom song"
     if state.phase == "loading" then
@@ -505,6 +488,10 @@ local function render()
         status = "Saving vote..."
     elseif state.phase == "error" then
         status = "Vote unavailable - press to retry"
+    end
+    if state.phase ~= "loading" and state.phase ~= "submitting" then
+        setText(widgets.up.text, "▲ " .. tostring(state.upvotes or 0))
+        setText(widgets.down.text, "▼ " .. tostring(state.downvotes or 0))
     end
     if widgets.status ~= nil then setText(widgets.status.text, status) end
 end
@@ -528,7 +515,28 @@ local function applyResponse(result)
     state.downvotes = result.state.downvotes
     log("info", "vote response applied current=" .. tostring(state.currentVote)
         .. " up=" .. tostring(state.upvotes) .. " down=" .. tostring(state.downvotes))
+    -- Re-enable the input surface immediately when the request completes;
+    -- label repainting is deferred, but click availability must not be.
     render()
+    -- VaRest callbacks are not guaranteed to run on the game thread. Queue
+    -- all Slate mutations so the attached stock labels can repaint safely.
+    local repaint = function()
+        log("info", "vote repaint entered widgets=" .. tostring(state.widgets ~= nil))
+        if state.widgets == nil then return end
+        log("info", "vote repaint state-only current=" .. tostring(state.currentVote)
+            .. " up=" .. tostring(state.upvotes) .. " down=" .. tostring(state.downvotes))
+        render()
+    end
+    -- Give the freshly-created Blueprint one rendered tick before touching
+    -- its generated TextBlock. Immediate mutation can stall this build.
+    if type(ExecuteWithDelay) == "function" then
+        ExecuteWithDelay(1000, function()
+            log("info", "vote repaint executing after widget settle")
+            repaint()
+        end)
+    else
+        repaint()
+    end
 end
 
 local function loadVote()
@@ -559,6 +567,10 @@ local function submit(direction)
 end
 
 local BUTTON_HANDLER_PATHS = {
+    -- The generated Blueprint delegate handlers are retained for builds where
+    -- UE4SS dispatches them, while the native UButton callback is the input
+    -- path used by the current Flat build.
+    native = "/Script/UMG.Button:SlateHandleClicked",
     flat = "/Game/Flat/Blueprints/UI/InGame/FlatInGameButton.FlatInGameButton_C:"
         .. "BndEvt__FlatInGameButton_Button_64_K2Node_ComponentBoundEvent_0_OnButtonPressedEvent__DelegateSignature",
     vr = "/Game/VRKeyboards/Blueprints/Keyboards/BasicPointAndClick/WBP_Button_Basic.WBP_Button_Basic_C:"
@@ -591,6 +603,12 @@ local function installButtonHooks()
     end
     local installed = false
     local function onButtonPressed(...)
+        local arguments = {}
+        for index = 1, select("#", ...) do
+            local value = unwrap(select(index, ...))
+            table.insert(arguments, valid(value) and objectPath(value) or tostring(value))
+        end
+        log("info", "Results vote button hook invoked args=" .. table.concat(arguments, " | "))
         local direction = voteDirectionForClickedButton(...)
         if direction ~= nil then
             log("info", "Results vote button pressed direction=" .. direction)
@@ -598,7 +616,16 @@ local function installButtonHooks()
         end
     end
     for _, handlerPath in pairs(BUTTON_HANDLER_PATHS) do
-        if pcall(RegisterHook, handlerPath, onButtonPressed) then
+        local ok, hookError
+        if handlerPath == BUTTON_HANDLER_PATHS.native then
+            ok, hookError = pcall(RegisterHook, handlerPath, nil, onButtonPressed)
+        else
+            ok, hookError = pcall(RegisterHook, handlerPath, onButtonPressed)
+        end
+        log("info", "Results button hook registration path=" .. handlerPath
+            .. " ok=" .. tostring(ok)
+            .. (hookError ~= nil and " error=" .. tostring(hookError) or ""))
+        if ok then
             installed = true
         end
     end
@@ -619,9 +646,7 @@ local function createWidgets(panel, panelPath, mode)
         end
         return false
     end
-    -- Keep the panel beside the Results tabs, where it is discoverable without
-    -- covering Stats content. Coordinates are in the stable 948x988 canvas.
-    local geometry = { x = 650, y = 280, width = 108, height = 112 }
+    local geometry = { x = 957, y = 745, width = 108, height = 112 }
     local container = construct("/Script/UMG.CanvasPanel", canvas)
     log("info", "vote panel construct container begin")
     if not valid(container) or not addToCanvas(canvas, container, geometry) then
@@ -632,34 +657,17 @@ local function createWidgets(panel, panelPath, mode)
         return false
     end
     log("info", "vote panel construct container done")
-    local background = construct("/Script/UMG.Border", container)
-    if valid(background) and addToCanvas(container, background, { x = 0, y = 0, width = 108, height = 112, z = 0 }) then
-        setColor(background, { R = 0.025, G = 0.02, B = 0.03, A = 0.94 })
-    else
-        background = nil
-    end
     log("info", "vote panel construct up begin")
-    local up = makeButton(container, panel, mode, "", { x = 6, y = 7, width = 42, height = 42, z = 2 })
+    local up = makeButton(container, panel, mode, "▲ 0", { x = 6, y = 7, width = 96, height = 42, z = 2 })
     log("info", "vote panel construct up done")
-    local down = makeButton(container, panel, mode, "", { x = 6, y = 63, width = 42, height = 42, z = 2 })
+    local down = makeButton(container, panel, mode, "▼ 0", { x = 6, y = 63, width = 96, height = 42, z = 2 })
     log("info", "vote panel construct down done")
-    -- Draw visuals above the stock widgets; SelfHitTestInvisible keeps the
-    -- transparent stock widgets as the input surfaces.
-    log("info", "vote visual construct up begin")
-    local upVisual = makeVisualButton(container, "^", { x = 6, y = 7, width = 42, height = 42, z = 3 }, up.text)
-    log("info", "vote visual construct up done")
-    local downVisual = makeVisualButton(container, "v", { x = 6, y = 63, width = 42, height = 42, z = 3 }, down.text)
-    log("info", "vote visual construct down done")
-    local upCount = makeCountLabel(container, "0", { x = 52, y = 7, width = 48, height = 42, z = 1 }, up.text)
-    local downCount = makeCountLabel(container, "0", { x = 52, y = 63, width = 48, height = 42, z = 1 }, down.text)
-    if up == nil or down == nil or upVisual == nil or downVisual == nil or upCount == nil or downCount == nil then
+    if up == nil or down == nil then
         if not state.diagnostics.buttonsFailed then
             state.diagnostics.buttonsFailed = true
             log("error", "failed to construct or attach Results vote buttons")
         end
-        safeCall(function()
-            container:RemoveFromParent()
-        end, nil)
+        safeCall(function() if valid(container) then container:RemoveFromParent() end end, nil)
         return false
     end
     safeCall(function()
@@ -668,14 +676,9 @@ local function createWidgets(panel, panelPath, mode)
     end, nil)
     state.widgets = {
         container = container,
-        background = background,
         status = nil,
         up = up,
         down = down,
-        upVisual = upVisual,
-        downVisual = downVisual,
-        upCount = upCount,
-        downCount = downCount,
     }
     state.panelPath = panelPath
     state.mode = mode

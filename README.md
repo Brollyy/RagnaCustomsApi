@@ -13,11 +13,6 @@ For installation and deployment, see the [RagnaModManager application repository
 
 The `.rmod` is the distributable library package: it contains a root manifest and this mod's `Scripts/` tree. Other `.rmod`-packaged mods can declare it as a runtime dependency.
 
-```text
-Ragnarock/Binaries/Win64/ue4ss/Mods/RagnaCustomsApi/Scripts/*.lua
-Ragnarock/Binaries/Win64/Mods/RagnaCustomsApi/Scripts/*.lua
-```
-
 Optionally probe the live RagnaCustoms endpoints used by the library:
 
 ```bash

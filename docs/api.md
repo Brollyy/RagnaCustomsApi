@@ -299,7 +299,6 @@ The usual website/app voting routes use fixed server routes and the caller's aut
 
 ```lua
 RagnaCustoms.configure({
-    apiKey = "your-consumer-key",
     httpPost = MyAuthenticatedPost,
 })
 RagnaCustoms.upvote(song) -- POST /song-vote/upvote/<song id>

@@ -1,5 +1,5 @@
 local Api = {
-    VERSION = "0.2.1",
+    VERSION = "0.2.2",
 }
 
 local state = {
@@ -637,6 +637,64 @@ local function defaultHttpRequest(method, url, body, callback)
     state.requestSerial = state.requestSerial + 1
     local requestId = state.requestSerial
     state.activeRequests[requestId] = request
+    if type(ExecuteWithDelay) ~= "function" then
+        state.activeRequests[requestId] = nil
+        callback(nil, { code = "scheduler_unavailable", message = "UE4SS delayed execution is unavailable" })
+        return nil
+    end
+
+    local completed = false
+    local function finish(response, err)
+        if completed then
+            return
+        end
+        completed = true
+        state.activeRequests[requestId] = nil
+        callback(response, err)
+    end
+
+    local function bindDelegate(name, handler)
+        local delegate = safeObjectCall(function()
+            return request[name]
+        end, nil)
+        if delegate == nil then
+            delegate = safeObjectCall(function()
+                return request:GetPropertyValue(name)
+            end, nil)
+        end
+        if delegate == nil then
+            return false
+        end
+        return safeObjectCall(function()
+            delegate:Add(handler)
+            return true
+        end, false)
+    end
+
+    local completeBound = bindDelegate("OnRequestComplete", function()
+        local responseCode = safeObjectCall(function()
+            return tonumber(unwrapRemoteValue(request:GetResponseCode()))
+        end, 0)
+        local content = safeObjectCall(function()
+            request:GetResponseContentAsString(true)
+            return request.ResponseContent:ToString()
+        end, "")
+        print("[RagnaCustomsApi] vote transport stage=complete code=" .. tostring(responseCode)
+            .. " bytes=" .. tostring(#tostring(content)) .. "\n")
+        if responseCode > 0 then
+            finish({ status = responseCode, body = content }, nil)
+        else
+            finish(nil, { code = "transport_error", message = "vote request failed" })
+        end
+    end)
+    local failBound = bindDelegate("OnRequestFail", function()
+        print("[RagnaCustomsApi] vote transport stage=failed error=request_failed\n")
+        finish(nil, { code = "transport_error", message = "vote request failed" })
+    end)
+    if not completeBound and not failBound then
+        print("[RagnaCustomsApi] vote transport events unavailable; using status fallback\n")
+    end
+
     local configured, configuredError = pcall(function()
         request:SetVerb(method == "GET" and 0 or 2)
         request:SetContentType(2)
@@ -648,49 +706,58 @@ local function defaultHttpRequest(method, url, body, callback)
     end)
     if not configured then
         print("[RagnaCustomsApi] vote transport stage=failed error=" .. tostring(configuredError) .. "\n")
-        state.activeRequests[requestId] = nil
-        callback(nil, { code = "transport_start_failed", message = "VaRest could not start the request" })
+        finish(nil, { code = "transport_start_failed", message = "VaRest could not start the request" })
         return nil
     end
 
-    local attempts = 0
-    local function poll()
-        attempts = attempts + 1
-        local responseCode = safeObjectCall(function()
-            return tonumber(unwrapRemoteValue(request:GetResponseCode()))
-        end, 0)
-        local status = safeObjectCall(function()
-            return tonumber(unwrapRemoteValue(request:GetStatus()))
-        end, 1)
-        if responseCode > 0 then
-            local content = safeObjectCall(function()
-                request:GetResponseContentAsString(true)
-                return request.ResponseContent:ToString()
-            end, "")
-            print("[RagnaCustomsApi] vote transport stage=complete code=" .. tostring(responseCode)
-                .. " bytes=" .. tostring(#tostring(content)) .. "\n")
-            state.activeRequests[requestId] = nil
-            callback({ status = responseCode, body = content }, nil)
-            return
+    if not completeBound and not failBound then
+        local attempts = 0
+        local function pollStatus()
+            if completed then
+                return
+            end
+            attempts = attempts + 1
+            local status = safeObjectCall(function()
+                return tonumber(unwrapRemoteValue(request:GetStatus()))
+            end, 1)
+            if status == 2 then
+                finish(nil, { code = "transport_error", message = "vote request failed" })
+                return
+            end
+            if status == 3 then
+                local responseCode = safeObjectCall(function()
+                    return tonumber(unwrapRemoteValue(request:GetResponseCode()))
+                end, 0)
+                local content = safeObjectCall(function()
+                    request:GetResponseContentAsString(true)
+                    return request.ResponseContent:ToString()
+                end, "")
+                if responseCode > 0 then
+                    finish({ status = responseCode, body = content }, nil)
+                else
+                    finish(nil, { code = "transport_error", message = "vote request failed" })
+                end
+                return
+            end
+            if attempts >= 60 then
+                finish(nil, { code = "timeout", message = "vote request timed out" })
+                return
+            end
+            ExecuteWithDelay(500, pollStatus)
         end
-        if attempts >= 300 then
-            print("[RagnaCustomsApi] vote transport stage=timeout status=" .. tostring(status) .. "\n")
-            state.activeRequests[requestId] = nil
-            callback(nil, {
-                code = "timeout",
-                message = "vote request timed out",
-            })
-            return
-        end
-        ExecuteWithDelay(100, poll)
+        ExecuteWithDelay(500, pollStatus)
     end
 
-    if type(ExecuteWithDelay) ~= "function" then
-        state.activeRequests[requestId] = nil
-        callback(nil, { code = "scheduler_unavailable", message = "UE4SS delayed execution is unavailable" })
-        return nil
-    end
-    ExecuteWithDelay(100, poll)
+    ExecuteWithDelay(30000, function()
+        if completed then
+            return
+        end
+        print("[RagnaCustomsApi] vote transport stage=timeout\n")
+        finish(nil, {
+            code = "timeout",
+            message = "vote request timed out",
+        })
+    end)
     return requestId
 end
 

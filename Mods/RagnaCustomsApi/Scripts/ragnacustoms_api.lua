@@ -145,7 +145,7 @@ local function shellFallbackAvailable()
     if package ~= nil and type(package.config) == "string" then
         return package.config:sub(1, 1) ~= "\\"
     end
-    return true
+    return false
 end
 
 local function archivePathIsSafe(entry)
@@ -528,6 +528,22 @@ local function validateArchive(zipPath)
     for entry in tostring(listing or ""):gmatch("[^\r\n]+") do
         if not archivePathIsSafe(entry) then
             return nil, "archive contains an unsafe member path: " .. entry
+        end
+        local metadata, metadataError = readPipe(string.format(
+            "%s -Z -v %s %s",
+            shellQuote(state.config.unzipPath),
+            shellQuote(zipPath),
+            shellQuote(entry)
+        ))
+        if metadataError then
+            return nil, metadataError
+        end
+        local mode = tostring(metadata or ""):match("Unix file attributes %((%d+) octal%)")
+        if mode ~= nil then
+            local fileType = math.floor(tonumber(mode, 8) / 4096)
+            if fileType ~= 0 and fileType ~= 4 and fileType ~= 8 then
+                return nil, "archive contains a special-file member: " .. entry
+            end
         end
     end
     return true

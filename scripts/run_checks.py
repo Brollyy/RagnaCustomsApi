@@ -14,6 +14,7 @@ OFFLINE_TESTS = (
     "tests/installed_contract.py",
     "tests/capabilities_contract.py",
     "tests/archive_path_contract.py",
+    "tests/archive_extraction_integration.py",
 )
 
 

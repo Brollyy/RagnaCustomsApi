@@ -1,5 +1,5 @@
 local Api = {
-    VERSION = "0.2.0",
+    VERSION = "0.2.1",
 }
 
 local state = {
@@ -136,6 +136,32 @@ end
 local function shellQuote(value)
     local text = tostring(value or "")
     return "'" .. text:gsub("'", "'\\''") .. "'"
+end
+
+local function shellFallbackAvailable()
+    if state.config.allowShell ~= true then
+        return false
+    end
+    if package ~= nil and type(package.config) == "string" then
+        return package.config:sub(1, 1) ~= "\\"
+    end
+    return false
+end
+
+local function archivePathIsSafe(entry)
+    local path = tostring(entry or ""):gsub("\\", "/")
+    if path == "" or path:find("%z", 1, true) ~= nil then
+        return false
+    end
+    if path:match("^/") or path:match("^//") or path:match("^%a:/") then
+        return false
+    end
+    for component in path:gmatch("[^/]+") do
+        if component == ".." then
+            return false
+        end
+    end
+    return true
 end
 
 local function joinUrl(base, path)
@@ -361,8 +387,8 @@ local function formatNumbers(values, separator)
 end
 
 local function readPipe(command)
-    if not state.config.allowShell then
-        return setError("shell transport is disabled and no transport hook was provided")
+    if not shellFallbackAvailable() then
+        return setError("POSIX shell transport is disabled or unavailable; provide a transport hook")
     end
     if io == nil or type(io.popen) ~= "function" then
         return setError("io.popen is unavailable and no transport hook was provided")
@@ -380,8 +406,8 @@ local function readPipe(command)
 end
 
 local function defaultListFiles(root)
-    if not state.config.allowShell then
-        return setError("shell file listing is disabled and no listFiles hook was provided")
+    if not shellFallbackAvailable() then
+        return setError("POSIX file listing is disabled or unavailable; provide a listFiles hook")
     end
     local quoted = shellQuote(root)
     local command = string.format("if [ -d %s ]; then find %s -maxdepth 4 -type f; fi", quoted, quoted)
@@ -474,8 +500,8 @@ local function defaultHttpPost(url, body)
 end
 
 local function defaultDownloadFile(url, destination)
-    if not state.config.allowShell then
-        return setError("shell download is disabled and no downloadFile hook was provided")
+    if not shellFallbackAvailable() then
+        return setError("POSIX shell download is disabled or unavailable; provide a downloadFile hook")
     end
     local command = string.format(
         "%s -fL --create-dirs -o %s %s",
@@ -490,9 +516,46 @@ local function defaultDownloadFile(url, destination)
     return destination
 end
 
+local function validateArchive(zipPath)
+    local listing, err = readPipe(string.format(
+        "%s -Z1 %s",
+        shellQuote(state.config.unzipPath),
+        shellQuote(zipPath)
+    ))
+    if err then
+        return nil, err
+    end
+    for entry in tostring(listing or ""):gmatch("[^\r\n]+") do
+        if not archivePathIsSafe(entry) then
+            return nil, "archive contains an unsafe member path: " .. entry
+        end
+        local metadata, metadataError = readPipe(string.format(
+            "%s -Z -v %s %s",
+            shellQuote(state.config.unzipPath),
+            shellQuote(zipPath),
+            shellQuote(entry)
+        ))
+        if metadataError then
+            return nil, metadataError
+        end
+        local mode = tostring(metadata or ""):match("Unix file attributes %((%d+) octal%)")
+        if mode ~= nil then
+            local fileType = math.floor(tonumber(mode, 8) / 4096)
+            if fileType ~= 0 and fileType ~= 4 and fileType ~= 8 then
+                return nil, "archive contains a special-file member: " .. entry
+            end
+        end
+    end
+    return true
+end
+
 local function defaultUnzipFile(zipPath, destinationDir)
-    if not state.config.allowShell then
-        return setError("shell unzip is disabled and no unzipFile hook was provided")
+    if not shellFallbackAvailable() then
+        return setError("POSIX shell unzip is disabled or unavailable; provide a safe unzipFile hook")
+    end
+    local validArchive, validationError = validateArchive(zipPath)
+    if not validArchive then
+        return nil, validationError
     end
     local command = string.format(
         "%s -o %s -d %s",
@@ -1075,7 +1138,7 @@ end
 function Api.getCapabilities()
     local songFolder = Api.resolveSongFolder()
     local hasSongFolder = songFolder ~= nil and songFolder ~= ""
-    local hasShell = state.config.allowShell == true
+    local hasShell = shellFallbackAvailable()
     local hasHttpGet = type(state.config.httpGet) == "function" or hasShell
     local hasHttpPost = type(state.config.httpPost) == "function" or hasShell
     local hasHttpRequest = type(state.config.httpRequest) == "function"
@@ -1960,6 +2023,7 @@ Api._internals = {
     deriveVoteEndpoint = deriveVoteEndpoint,
     parseVoteResponse = parseVoteResponse,
     redactEndpoint = redactEndpoint,
+    archivePathIsSafe = archivePathIsSafe,
 }
 
 return Api

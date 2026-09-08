@@ -18,7 +18,7 @@ Supported options:
     maxPreloadPages = 1,
     songFolder = "C:/Users/you/Documents/Ragnarock/CustomSongs",
     downloadSubfolder = nil,
-    allowShell = true,
+    allowShell = true, -- POSIX fallback only; Windows requires transport hooks
     curlPath = "curl",
     unzipPath = "unzip",
     scriptPath = nil,

@@ -627,7 +627,7 @@ local function constructVaRestRequest()
 end
 
 local function defaultHttpRequest(method, url, body, callback)
-    print("[RagnaCustomsApi] vote transport stage=construct method=" .. tostring(method) .. "\n")
+    print("[RagnaCustomsApi] HTTP transport stage=construct method=" .. tostring(method) .. "\n")
     local request, constructError = constructVaRestRequest()
     if request == nil then
         callback(nil, { code = "transport_unavailable", message = constructError })
@@ -679,20 +679,20 @@ local function defaultHttpRequest(method, url, body, callback)
             request:GetResponseContentAsString(true)
             return request.ResponseContent:ToString()
         end, "")
-        print("[RagnaCustomsApi] vote transport stage=complete code=" .. tostring(responseCode)
+        print("[RagnaCustomsApi] HTTP transport stage=complete code=" .. tostring(responseCode)
             .. " bytes=" .. tostring(#tostring(content)) .. "\n")
         if responseCode > 0 then
             finish({ status = responseCode, body = content }, nil)
         else
-            finish(nil, { code = "transport_error", message = "vote request failed" })
+            finish(nil, { code = "transport_error", message = "HTTP request failed" })
         end
     end)
     local failBound = bindDelegate("OnRequestFail", function()
-        print("[RagnaCustomsApi] vote transport stage=failed error=request_failed\n")
-        finish(nil, { code = "transport_error", message = "vote request failed" })
+        print("[RagnaCustomsApi] HTTP transport stage=failed error=request_failed\n")
+        finish(nil, { code = "transport_error", message = "HTTP request failed" })
     end)
     if not completeBound and not failBound then
-        print("[RagnaCustomsApi] vote transport events unavailable; using status fallback\n")
+        print("[RagnaCustomsApi] HTTP transport events unavailable; using status fallback\n")
     end
 
     local configured, configuredError = pcall(function()
@@ -705,7 +705,7 @@ local function defaultHttpRequest(method, url, body, callback)
         request:ProcessURL(url)
     end)
     if not configured then
-        print("[RagnaCustomsApi] vote transport stage=failed error=" .. tostring(configuredError) .. "\n")
+        print("[RagnaCustomsApi] HTTP transport stage=failed error=" .. tostring(configuredError) .. "\n")
         finish(nil, { code = "transport_start_failed", message = "VaRest could not start the request" })
         return nil
     end
@@ -721,7 +721,7 @@ local function defaultHttpRequest(method, url, body, callback)
                 return tonumber(unwrapRemoteValue(request:GetStatus()))
             end, 1)
             if status == 2 then
-                finish(nil, { code = "transport_error", message = "vote request failed" })
+                finish(nil, { code = "transport_error", message = "HTTP request failed" })
                 return
             end
             if status == 3 then
@@ -735,12 +735,12 @@ local function defaultHttpRequest(method, url, body, callback)
                 if responseCode > 0 then
                     finish({ status = responseCode, body = content }, nil)
                 else
-                    finish(nil, { code = "transport_error", message = "vote request failed" })
+                    finish(nil, { code = "transport_error", message = "HTTP request failed" })
                 end
                 return
             end
             if attempts >= 60 then
-                finish(nil, { code = "timeout", message = "vote request timed out" })
+                finish(nil, { code = "timeout", message = "HTTP request timed out" })
                 return
             end
             ExecuteWithDelay(500, pollStatus)
@@ -752,10 +752,10 @@ local function defaultHttpRequest(method, url, body, callback)
         if completed then
             return
         end
-        print("[RagnaCustomsApi] vote transport stage=timeout\n")
+        print("[RagnaCustomsApi] HTTP transport stage=timeout\n")
         finish(nil, {
             code = "timeout",
-            message = "vote request timed out",
+            message = "HTTP request timed out",
         })
     end)
     return requestId

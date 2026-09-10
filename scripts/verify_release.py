@@ -83,7 +83,7 @@ def package_hashes(package_path: Path) -> dict[str, str]:
             raise AssertionError(f"unexpected manifest files: {files}")
         if manifest.get("version") != VERSION:
             raise AssertionError(f"manifest version must be {VERSION}")
-        if manifest.get("requires") != {"manager": ">=1.1.0"}:
+        if manifest.get("requires") != {"manager": ">=0.2.0"}:
             raise AssertionError("manifest must require the dependency-aware manager")
         return {
             relative: sha256_bytes(archive.read(relative))

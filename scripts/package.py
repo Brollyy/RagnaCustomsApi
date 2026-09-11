@@ -24,7 +24,7 @@ def manifest() -> dict:
         "game": "ragnarock",
         "description": "Reusable async client for the configured RagnaCustoms leaderboard API.",
         "requires": {
-            "manager": ">=1.1.0",
+            "manager": ">=0.2.0",
         },
         "dependencies": {},
         "conflicts": [],

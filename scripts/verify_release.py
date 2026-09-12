@@ -38,8 +38,12 @@ def win64_dir(game_dir: Path) -> Path:
 
 def deployed_mod_dir(game_dir: Path) -> Path:
     win64 = win64_dir(game_dir)
+    # Match the runtime's layout selection: the root Win64 UE4SS loader takes
+    # precedence when both the legacy and manager directories exist.
+    if (win64 / "UE4SS.dll").exists():
+        return win64 / "Mods" / MOD_NAME
     manager = win64 / "ue4ss" / "Mods" / MOD_NAME
-    if manager.exists():
+    if any((manager / relative).exists() for relative in INSTALLED_FILES.values()):
         return manager
     return win64 / "Mods" / MOD_NAME
 

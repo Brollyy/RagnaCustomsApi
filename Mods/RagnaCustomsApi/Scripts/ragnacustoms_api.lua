@@ -644,12 +644,18 @@ local function defaultHttpRequest(method, url, body, callback)
     end
 
     local completed = false
-    local function finish(response, err)
+    local timedOut = false
+    local function releaseRequest()
+        state.activeRequests[requestId] = nil
+    end
+    local function finish(response, err, retainUntilTransportEnds)
         if completed then
             return
         end
         completed = true
-        state.activeRequests[requestId] = nil
+        if not retainUntilTransportEnds then
+            releaseRequest()
+        end
         callback(response, err)
     end
 
@@ -672,11 +678,15 @@ local function defaultHttpRequest(method, url, body, callback)
     end
 
     local completeBound = bindDelegate("OnRequestComplete", function()
+        if timedOut then
+            releaseRequest()
+            return
+        end
         local responseCode = safeObjectCall(function()
             return tonumber(unwrapRemoteValue(request:GetResponseCode()))
         end, 0)
         local content = safeObjectCall(function()
-            request:GetResponseContentAsString(true)
+            request:GetResponseContentAsString(false)
             return request.ResponseContent:ToString()
         end, "")
         print("[RagnaCustomsApi] HTTP transport stage=complete code=" .. tostring(responseCode)
@@ -688,6 +698,10 @@ local function defaultHttpRequest(method, url, body, callback)
         end
     end)
     local failBound = bindDelegate("OnRequestFail", function()
+        if timedOut then
+            releaseRequest()
+            return
+        end
         print("[RagnaCustomsApi] HTTP transport stage=failed error=request_failed\n")
         finish(nil, { code = "transport_error", message = "HTTP request failed" })
     end)
@@ -720,16 +734,27 @@ local function defaultHttpRequest(method, url, body, callback)
             local status = safeObjectCall(function()
                 return tonumber(unwrapRemoteValue(request:GetStatus()))
             end, 1)
+            local responseCode = safeObjectCall(function()
+                return tonumber(unwrapRemoteValue(request:GetResponseCode()))
+            end, 0)
+            -- Some UE4SS/VaRest builds do not expose the completion delegate
+            -- and do not transition the reflected request status reliably.
+            -- A positive HTTP response code is still definitive completion.
+            if responseCode > 0 then
+                local content = safeObjectCall(function()
+                    request:GetResponseContentAsString(false)
+                    return request.ResponseContent:ToString()
+                end, "")
+                finish({ status = responseCode, body = content }, nil)
+                return
+            end
             if status == 2 then
                 finish(nil, { code = "transport_error", message = "HTTP request failed" })
                 return
             end
             if status == 3 then
-                local responseCode = safeObjectCall(function()
-                    return tonumber(unwrapRemoteValue(request:GetResponseCode()))
-                end, 0)
                 local content = safeObjectCall(function()
-                    request:GetResponseContentAsString(true)
+                    request:GetResponseContentAsString(false)
                     return request.ResponseContent:ToString()
                 end, "")
                 if responseCode > 0 then
@@ -752,11 +777,12 @@ local function defaultHttpRequest(method, url, body, callback)
         if completed then
             return
         end
+        timedOut = true
         print("[RagnaCustomsApi] HTTP transport stage=timeout\n")
         finish(nil, {
             code = "timeout",
             message = "HTTP request timed out",
-        })
+        }, true)
     end)
     return requestId
 end
@@ -1996,15 +2022,20 @@ local function performVoteRequest(method, beatmap, direction, callback, options)
             return
         end
 
-        local parsed, parseError = parseVoteResponse(response and response.body or "")
         local status = tonumber(response and response.status) or 0
+        local parsed, parseError
+        if status < 200 or status >= 300 then
+            parseError = { code = "http_error", message = "vote server returned HTTP " .. tostring(status) }
+        else
+            parsed, parseError = parseVoteResponse(response and response.body or "")
+        end
         if status < 200 or status >= 300 or parsed == nil then
             local failed = {
                 ok = false,
                 beatmap = cleanBeatmap,
                 generation = generation,
                 status = status,
-                error = parseError or { code = "http_error", message = "vote server rejected the request" },
+                error = parseError or { code = "invalid_response", message = "vote response is invalid" },
             }
             state.lastError = failed.error.message or failed.error.code
             emit("vote.failed", failed)

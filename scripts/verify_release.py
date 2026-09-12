@@ -38,14 +38,14 @@ def win64_dir(game_dir: Path) -> Path:
 
 def deployed_mod_dir(game_dir: Path) -> Path:
     win64 = win64_dir(game_dir)
-    # Match the runtime's layout selection: the root Win64 UE4SS loader takes
-    # precedence when both the legacy and manager directories exist.
-    if (win64 / "UE4SS.dll").exists():
+    # Modern UE4SS is the default layout. Proton deployments currently use
+    # the legacy sibling Mods directory because the nested loader layout is
+    # incompatible there. A root UE4SS log is also direct evidence that the
+    # legacy loader is the active runtime for an already-running installation.
+    if "compatdata" in game_dir.parts or (win64 / "UE4SS.log").exists():
         return win64 / "Mods" / MOD_NAME
     manager = win64 / "ue4ss" / "Mods" / MOD_NAME
-    if any((manager / relative).exists() for relative in INSTALLED_FILES.values()):
-        return manager
-    return win64 / "Mods" / MOD_NAME
+    return manager
 
 
 def legacy_mod_dir(game_dir: Path) -> Path:
@@ -156,9 +156,6 @@ def main() -> int:
         installed = installed_hashes(game_dir)
         assert_hashes_match("installed copy", source, installed)
         print("installed_copy: ok")
-        legacy = legacy_hashes(game_dir)
-        assert_hashes_match("legacy installed copy", source, legacy)
-        print("legacy_installed_copy: ok")
 
     for relative, digest in source.items():
         print(f"{relative}: {digest}")

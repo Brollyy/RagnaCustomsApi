@@ -118,8 +118,6 @@ def main() -> int:
         "canDownloadZip",
         "canScanInstalled",
         "canVote",
-        "discoverApiKeyFromCustomApiUrls",
-        "sensitiveConsent",
         "SetHeader",
         "requestSerial = 0",
         "httpRequest",

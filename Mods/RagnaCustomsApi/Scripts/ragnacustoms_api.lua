@@ -21,9 +21,6 @@ local state = {
         win64Dir = nil,
         gameDir = nil,
         apiKey = nil,
-        sensitiveConsent = {
-            getCustomApiUrls = false,
-        },
         headers = {},
         gameConfigPath = nil,
         httpRequest = nil,
@@ -435,45 +432,13 @@ local function defaultHttpGet(url)
     return readPipe(command)
 end
 
-local function discoverApiKeyFromCustomApiUrls()
-    local consent = state.config.sensitiveConsent
-    local allowed = consent == true or (type(consent) == "table" and consent.getCustomApiUrls == true)
-    if not allowed or type(FindFirstOf) ~= "function" then
-        return nil
-    end
-    for _, className in ipairs({ "RagnarockGameInstance", "BP_RagnarockGameInstance_C", "GameInstance" }) do
-        local ok, instance = pcall(function()
-            return FindFirstOf(className)
-        end)
-        if ok and instance ~= nil then
-            local urlsOk, urls = pcall(function()
-                return instance:GetCustomApiURLs()
-            end)
-            if urlsOk and type(urls) == "table" then
-                for _, value in pairs(urls) do
-                    local endpoint = tostring(unwrapRemoteValue(value) or "")
-                    local key = endpoint:match("/wanapi/score/([^/%?#]+)")
-                    if key ~= nil and key ~= "" then
-                        return key
-                    end
-                end
-            end
-        end
-    end
-    return nil
-end
-
 requestHeaders = function()
     local headers = {}
     for name, value in pairs(state.config.headers or {}) do
         headers[tostring(name)] = tostring(value)
     end
-    local apiKey = state.config.apiKey
-    if apiKey == nil or apiKey == "" then
-        apiKey = discoverApiKeyFromCustomApiUrls()
-    end
-    if apiKey ~= nil and apiKey ~= "" then
-        headers["X-API-Key"] = tostring(apiKey)
+    if state.config.apiKey ~= nil and state.config.apiKey ~= "" then
+        headers["X-API-Key"] = tostring(state.config.apiKey)
     end
     return headers
 end
@@ -1202,9 +1167,6 @@ function Api.getCapabilities()
     local hasListFiles = type(state.config.listFiles) == "function" or hasShell
     local hasOpenUrl = type(state.config.openUrl) == "function"
     local hasApiKey = state.config.apiKey ~= nil and state.config.apiKey ~= ""
-    if not hasApiKey then
-        hasApiKey = discoverApiKeyFromCustomApiUrls() ~= nil
-    end
 
     return {
         version = Api.VERSION,

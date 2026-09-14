@@ -28,9 +28,6 @@ Supported options:
     win64Dir = nil,
     gameDir = nil,
     apiKey = nil, -- consumer API key sent as X-API-Key for documented API requests
-    sensitiveConsent = {
-        getCustomApiUrls = false, -- opt in before reading the game's URL configuration
-    },
     headers = {},
     gameConfigPath = nil,
     httpGet = nil, -- function(url, config, headers)
@@ -53,7 +50,7 @@ Every documented `/api` request requires an API key. The built-in shell and VaRe
 
 VaRest is the default transport in-game. Catalog methods return a request handle and publish their results through the existing `*.completed`/`*.failed` events. Set `transport = "shell"` for the synchronous shell/custom `httpGet`/`httpPost` behavior.
 
-When `sensitiveConsent.getCustomApiUrls` is true, the library may read the RagnaCustoms key from the game's `GetCustomApiURLs()` value. Consent is disabled by default; an explicit `apiKey` takes precedence and is never exposed by `getConfig()`.
+The explicit `apiKey` is never exposed by `getConfig()`.
 
 ## Status And Events
 
@@ -331,11 +328,11 @@ Installed entry shape:
 
 ## Voting
 
-The documented API voting routes use the caller's API key. Provide an `httpPost` transport when shell fallback is unavailable:
+The documented API voting routes use the configured API key. VaRest is the default transport; use `transport = "shell"` only when synchronous shell/custom HTTP behavior is desired:
 
 ```lua
 RagnaCustoms.configure({
-    httpPost = MyAuthenticatedPost,
+    transport = "varest",
 })
 RagnaCustoms.upvote(song) -- POST /api/song/<song id>/vote/up
 RagnaCustoms.downvote(song) -- POST /api/song/<song id>/vote/down

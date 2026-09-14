@@ -14,6 +14,7 @@ Supported options:
     baseUrl = "https://ragnacustoms.com",
     apiBaseUrl = "https://ragnacustoms.com",
     downloadBaseUrl = "https://api.ragnacustoms.com",
+    transport = "varest", -- "varest" (default) or "shell"
     preferApi = true,
     cacheTtlSeconds = 300,
     maxPreloadPages = 1,
@@ -49,6 +50,8 @@ Supported options:
 `getConfig()` returns a shallow copy of the active configuration table.
 
 Every documented `/api` request requires an API key. The built-in shell and VaRest transports send it as `X-API-Key`; injected transport hooks receive a computed headers table as their final argument and should forward it unchanged.
+
+VaRest is the default transport in-game. Catalog methods return a request handle and publish their results through the existing `*.completed`/`*.failed` events. Set `transport = "shell"` for the synchronous shell/custom `httpGet`/`httpPost` behavior.
 
 When `sensitiveConsent.getCustomApiUrls` is true, the library may read the RagnaCustoms key from the game's `GetCustomApiURLs()` value. Consent is disabled by default; an explicit `apiKey` takes precedence and is never exposed by `getConfig()`.
 
@@ -97,6 +100,20 @@ installed.compare.completed
 vote.started
 vote.completed
 vote.failed
+catalog.completed
+catalog.failed
+categories.completed
+categories.failed
+mappers.completed
+mappers.failed
+vote.details.completed
+vote.details.failed
+review.completed
+review.failed
+search.ui.completed
+search.ui.failed
+song.ui.completed
+song.ui.failed
 ```
 
 `on("*", callback)` receives `{ event = "...", payload = ... }`.
@@ -111,6 +128,7 @@ Use this before rendering install/search/vote controls. The result describes cur
 
 ```lua
 {
+    transport = "varest",
     canFetch = true,
     canSearch = true,
     canPreload = true,
@@ -121,6 +139,7 @@ Use this before rendering install/search/vote controls. The result describes cur
     canScanInstalled = true,
     canVote = false,
     voteConfigured = false,
+    canAsyncFetch = true,
     shellAllowed = true,
     songFolder = ".../Ragnarock/CustomSongs",
     transports = {
@@ -331,4 +350,4 @@ RagnaCustoms.downvote(song) -- POST /api/song/<id>/vote/down
 RagnaCustoms.reviewSong(song, { funFactor = 5, rhythm = 5, patternQuality = 5, readability = 5 })
 ```
 
-Catalog reads also accept `{ callback = function(result, error) end }` where asynchronous operation is needed; those calls use the configured `httpRequest` hook or built-in VaRest adapter. Arbitrary third-party callouts are not exposed through the public catalog API.
+The `httpRequest` hook and built-in VaRest adapter are internal transports for these API operations; arbitrary third-party callouts are not exposed through the public catalog API.

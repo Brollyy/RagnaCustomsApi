@@ -115,11 +115,13 @@ Use `scanInstalledSongs()` to inspect the resolved `CustomSongs` folder. Downloa
 
 ## Transport Hooks
 
+VaRest is selected by default in-game and delivers catalog results through the existing events. Set `transport = "shell"` to use synchronous shell/custom HTTP hooks.
+
 The library supports these transport hooks:
 
 - `httpGet`: catalog, search, detail, update, and song-list reads.
 - `httpPost`: authenticated API voting and review requests.
-- `httpRequest`: arbitrary asynchronous requests through a consumer hook or Ragnarock's bundled VaRest plugin.
+- `httpRequest`: asynchronous API transport through a consumer hook or Ragnarock's bundled VaRest plugin.
 - `downloadFile` and `unzipFile`: song downloads and extraction.
 - `mkdirs`, `listFiles`, `readFile`, and `writeFile`: local song-folder discovery and install metadata.
 - `openUrl`: optional `ragnac://install/<id>` launching.

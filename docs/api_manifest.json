@@ -94,17 +94,17 @@
     {
       "name": "getLastPlayed",
       "category": "catalog",
-      "signature": "getLastPlayed(results, options)"
+      "signature": "getLastPlayed(results)"
     },
     {
       "name": "getLastUploaded",
       "category": "catalog",
-      "signature": "getLastUploaded(results, options)"
+      "signature": "getLastUploaded(results)"
     },
     {
       "name": "getTopRated",
       "category": "catalog",
-      "signature": "getTopRated(results, days, options)"
+      "signature": "getTopRated(results, days)"
     },
     {
       "name": "searchCategories",

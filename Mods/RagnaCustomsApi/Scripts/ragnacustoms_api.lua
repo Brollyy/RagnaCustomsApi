@@ -20,6 +20,9 @@ local state = {
         win64Dir = nil,
         gameDir = nil,
         apiKey = nil,
+        sensitiveConsent = {
+            getCustomApiUrls = false,
+        },
         headers = {},
         gameConfigPath = nil,
         httpRequest = nil,
@@ -431,13 +434,45 @@ local function defaultHttpGet(url)
     return readPipe(command)
 end
 
+local function discoverApiKeyFromCustomApiUrls()
+    local consent = state.config.sensitiveConsent
+    local allowed = consent == true or (type(consent) == "table" and consent.getCustomApiUrls == true)
+    if not allowed or type(FindFirstOf) ~= "function" then
+        return nil
+    end
+    for _, className in ipairs({ "RagnarockGameInstance", "BP_RagnarockGameInstance_C", "GameInstance" }) do
+        local ok, instance = pcall(function()
+            return FindFirstOf(className)
+        end)
+        if ok and instance ~= nil then
+            local urlsOk, urls = pcall(function()
+                return instance:GetCustomApiURLs()
+            end)
+            if urlsOk and type(urls) == "table" then
+                for _, value in pairs(urls) do
+                    local endpoint = tostring(unwrapRemoteValue(value) or "")
+                    local key = endpoint:match("/wanapi/score/([^/%?#]+)")
+                    if key ~= nil and key ~= "" then
+                        return key
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
 local function requestHeaders()
     local headers = {}
     for name, value in pairs(state.config.headers or {}) do
         headers[tostring(name)] = tostring(value)
     end
-    if state.config.apiKey ~= nil and state.config.apiKey ~= "" then
-        headers["X-API-Key"] = tostring(state.config.apiKey)
+    local apiKey = state.config.apiKey
+    if apiKey == nil or apiKey == "" then
+        apiKey = discoverApiKeyFromCustomApiUrls()
+    end
+    if apiKey ~= nil and apiKey ~= "" then
+        headers["X-API-Key"] = tostring(apiKey)
     end
     return headers
 end
@@ -465,12 +500,12 @@ local function defaultDownloadFile(url, destination)
     if not shellFallbackAvailable() then
         return setError("POSIX shell download is disabled or unavailable; provide a downloadFile hook")
     end
-    local command = string.format(
-        "%s -fL --create-dirs -o %s %s",
-        shellQuote(state.config.curlPath),
-        shellQuote(destination),
-        shellQuote(url)
-    )
+    local headerArgs = ""
+    for name, value in pairs(requestHeaders()) do
+        headerArgs = headerArgs .. " -H " .. shellQuote(tostring(name) .. ": " .. tostring(value))
+    end
+    local command = string.format("%s -fL --create-dirs%s -o %s %s",
+        shellQuote(state.config.curlPath), headerArgs, shellQuote(destination), shellQuote(url))
     local _, err = readPipe(command)
     if err then
         return nil, err
@@ -902,8 +937,23 @@ local function parseApiSongs(json)
     return songs
 end
 
-local function fetchApiSongs(path)
-    local json, err = httpGet(joinUrl(state.config.apiBaseUrl, path))
+local function fetchApiSongs(path, callback)
+    local url = joinUrl(state.config.apiBaseUrl, path)
+    if type(callback) == "function" then
+        return httpRequest("GET", url, nil, function(response, err)
+            if err ~= nil then
+                callback(nil, err)
+                return
+            end
+            local status = tonumber(response and response.status) or 0
+            if status < 200 or status >= 300 then
+                callback(nil, { code = "http_error", message = "API returned HTTP " .. tostring(status) })
+                return
+            end
+            callback(parseApiSongs(response.body), nil)
+        end)
+    end
+    local json, err = httpGet(url)
     if err then
         return nil, err
     end
@@ -1095,13 +1145,6 @@ function Api.getConfig()
     return copy
 end
 
-function Api.request(method, url, body, callback)
-    if url == nil or trim(url) == "" then
-        return setError("request URL is required")
-    end
-    return httpRequest(method or "GET", url, body, callback)
-end
-
 function Api.setRuntimePaths(paths)
     paths = paths or {}
     for _, key in ipairs({ "scriptPath", "scriptDir", "win64Dir", "gameDir" }) do
@@ -1154,7 +1197,10 @@ function Api.getCapabilities()
     local hasUnzip = type(state.config.unzipFile) == "function" or hasShell
     local hasListFiles = type(state.config.listFiles) == "function" or hasShell
     local hasOpenUrl = type(state.config.openUrl) == "function"
-    local canAuthenticatedVote = type(state.config.httpPost) == "function"
+    local hasApiKey = state.config.apiKey ~= nil and state.config.apiKey ~= ""
+    if not hasApiKey then
+        hasApiKey = discoverApiKeyFromCustomApiUrls() ~= nil
+    end
 
     return {
         version = Api.VERSION,
@@ -1184,10 +1230,9 @@ function Api.getCapabilities()
         canExtractZip = hasSongFolder and hasDownload and hasUnzip,
         canScanInstalled = hasSongFolder and hasListFiles,
         canWriteInstallMetadata = hasSongFolder and (type(state.config.writeFile) == "function" or io ~= nil),
-        canVote = canAuthenticatedVote or hasHttpPost,
-        voteConfigured = canAuthenticatedVote or hasHttpPost,
-        canAuthenticatedVote = canAuthenticatedVote,
-        voteMode = "api",
+        canVote = hasHttpPost and hasApiKey,
+        voteConfigured = hasHttpPost and hasApiKey,
+        apiKeyConfigured = hasApiKey,
     }
 end
 
@@ -1322,7 +1367,16 @@ function Api.preloadAllSongs(maxPages)
     return Api.preloadSongs({ force = true, pages = maxPages or 9999 })
 end
 
-function Api.checkUpdates()
+function Api.checkUpdates(options)
+    options = options or {}
+    if type(options.callback) == "function" then
+        return fetchApiSongs("/api/song/check-updates", function(songs, err)
+            if err ~= nil then options.callback(nil, err) return end
+            rememberSongs(songs)
+            emit("updates.completed", { songs = songs })
+            options.callback(songs, nil)
+        end)
+    end
     local songs, err = fetchApiSongs("/api/song/check-updates")
     if err then
         return nil, err
@@ -1334,9 +1388,18 @@ function Api.checkUpdates()
     return songs
 end
 
-function Api.getSongList(listId)
+function Api.getSongList(listId, options)
+    options = options or {}
     if listId == nil or tostring(listId) == "" then
         return setError("song list id is required")
+    end
+    if type(options.callback) == "function" then
+        return fetchApiSongs("/api/song-list/" .. urlEncode(listId), function(songs, err)
+            if err ~= nil then options.callback(nil, err) return end
+            rememberSongs(songs)
+            emit("songlist.completed", { id = listId, songs = songs })
+            options.callback(songs, nil)
+        end)
     end
     local songs, err = fetchApiSongs("/api/song-list/" .. urlEncode(listId))
     if err then
@@ -1354,20 +1417,23 @@ function Api.getSongList(listId)
     return songs
 end
 
-function Api.getLastPlayed(results)
+function Api.getLastPlayed(results, options)
+    options = options or {}
     results = tonumber(results) or 10
-    return fetchApiSongs("/api/songs/last-played/" .. tostring(results))
+    return fetchApiSongs("/api/songs/last-played/" .. tostring(results), options.callback)
 end
 
-function Api.getLastUploaded(results)
+function Api.getLastUploaded(results, options)
+    options = options or {}
     results = tonumber(results) or 10
-    return fetchApiSongs("/api/songs/last-uploaded/" .. tostring(results))
+    return fetchApiSongs("/api/songs/last-uploaded/" .. tostring(results), options.callback)
 end
 
-function Api.getTopRated(results, days)
+function Api.getTopRated(results, days, options)
+    options = options or {}
     results = tonumber(results) or 10
     days = tonumber(days) or 30
-    return fetchApiSongs("/api/songs/top-rated/" .. tostring(results) .. "/" .. tostring(days))
+    return fetchApiSongs("/api/songs/top-rated/" .. tostring(results) .. "/" .. tostring(days), options.callback)
 end
 
 local function parseApiStringCollection(json, keys)
@@ -1871,12 +1937,9 @@ function Api.downloadSong(songOrId, options)
 
     local zipPath = joinPath(targetDir, tostring(id) .. ".zip")
     local urls = Api.urlsFor(id)
-    if state.config.apiKey ~= nil and state.config.apiKey ~= "" then
-        urls.zip = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id) .. "/" .. tostring(state.config.apiKey))
-    end
     local downloaded, err
     if type(state.config.downloadFile) == "function" then
-        downloaded, err = state.config.downloadFile(urls.zip, zipPath, state.config)
+        downloaded, err = state.config.downloadFile(urls.zip, zipPath, state.config, requestHeaders())
     else
         downloaded, err = defaultDownloadFile(urls.zip, zipPath)
     end

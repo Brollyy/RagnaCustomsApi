@@ -27,6 +27,9 @@ Supported options:
     win64Dir = nil,
     gameDir = nil,
     apiKey = nil, -- consumer API key sent as X-API-Key for documented API requests
+    sensitiveConsent = {
+        getCustomApiUrls = false, -- opt in before reading the game's URL configuration
+    },
     headers = {},
     gameConfigPath = nil,
     httpGet = nil, -- function(url, config, headers)
@@ -46,6 +49,8 @@ Supported options:
 `getConfig()` returns a shallow copy of the active configuration table.
 
 Every documented `/api` request requires an API key. The built-in shell and VaRest transports send it as `X-API-Key`; injected transport hooks receive a computed headers table as their final argument and should forward it unchanged.
+
+When `sensitiveConsent.getCustomApiUrls` is true, the library may read the RagnaCustoms key from the game's `GetCustomApiURLs()` value. Consent is disabled by default; an explicit `apiKey` takes precedence and is never exposed by `getConfig()`.
 
 ## Status And Events
 
@@ -177,7 +182,7 @@ When `preferApi` is true, preload uses the documented `GET /api/song/check-updat
 
 `checkUpdates()` exposes `GET /api/song/check-updates` directly. `getSongList(listId)` exposes `GET /api/song-list/<id>`.
 
-Additional documented catalog endpoints:
+Catalog endpoints:
 
 ```lua
 local played = RagnaCustoms.getLastPlayed(10)
@@ -262,7 +267,7 @@ local result = RagnaCustoms.downloadSong(song, {
 })
 ```
 
-By default `installSong` returns or opens the `ragnac://install/<id>` URL. Configure `openUrl` if the UE4SS runtime has a protocol-launch hook. `downloadSong` uses `GET /songs/download/<id>` from `downloadBaseUrl`, appending `/<apiKey>` when configured.
+By default `installSong` returns or opens the `ragnac://install/<id>` URL. Configure `openUrl` if the UE4SS runtime has a protocol-launch hook. `downloadSong` uses `GET /songs/download/<id>` from `downloadBaseUrl` and sends `X-API-Key` when configured. The key is never placed in the URL.
 
 Result:
 
@@ -326,10 +331,4 @@ RagnaCustoms.downvote(song) -- POST /api/song/<id>/vote/down
 RagnaCustoms.reviewSong(song, { funFactor = 5, rhythm = 5, patternQuality = 5, readability = 5 })
 ```
 
-The generic async transport remains available for arbitrary endpoints. It uses the configured `httpRequest` hook or the built-in VaRest adapter:
-
-```lua
-RagnaCustoms.request("GET", "https://example.invalid/mod-endpoint", nil, function(response, err)
-    -- response contains status and body
-end)
-```
+Catalog reads also accept `{ callback = function(result, error) end }` where asynchronous operation is needed; those calls use the configured `httpRequest` hook or built-in VaRest adapter. Arbitrary third-party callouts are not exposed through the public catalog API.

@@ -17,11 +17,6 @@
       "signature": "getConfig()"
     },
     {
-      "name": "request",
-      "category": "transport",
-      "signature": "request(method, url, body, callback)"
-    },
-    {
       "name": "setRuntimePaths",
       "category": "runtime",
       "signature": "setRuntimePaths(paths)"
@@ -99,17 +94,17 @@
     {
       "name": "getLastPlayed",
       "category": "catalog",
-      "signature": "getLastPlayed(results)"
+      "signature": "getLastPlayed(results, options)"
     },
     {
       "name": "getLastUploaded",
       "category": "catalog",
-      "signature": "getLastUploaded(results)"
+      "signature": "getLastUploaded(results, options)"
     },
     {
       "name": "getTopRated",
       "category": "catalog",
-      "signature": "getTopRated(results, days)"
+      "signature": "getTopRated(results, days, options)"
     },
     {
       "name": "searchCategories",

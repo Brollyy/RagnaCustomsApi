@@ -15,6 +15,7 @@ def capabilities(config: dict) -> dict:
     has_shell = config.get("allowShell") is True
     has_http_get = callable(config.get("httpGet")) or has_shell
     has_http_post = callable(config.get("httpPost")) or has_shell
+    has_api_key = bool(config.get("apiKey"))
     has_download = callable(config.get("downloadFile")) or has_shell
     has_unzip = callable(config.get("unzipFile")) or has_shell
     has_list_files = callable(config.get("listFiles")) or has_shell
@@ -28,8 +29,8 @@ def capabilities(config: dict) -> dict:
         "canDownloadZip": has_song_folder and has_download,
         "canExtractZip": has_song_folder and has_download and has_unzip,
         "canScanInstalled": has_song_folder and has_list_files,
-        "canVote": has_http_post,
-        "voteConfigured": has_http_post,
+        "canVote": has_http_post and has_api_key,
+        "voteConfigured": has_http_post and has_api_key,
     }
 
 
@@ -38,7 +39,7 @@ def marker() -> object:
 
 
 def main() -> int:
-    default = capabilities({"allowShell": True, "gameDir": "/Game/Ragnarock"})
+    default = capabilities({"allowShell": True, "gameDir": "/Game/Ragnarock", "apiKey": "key"})
     assert default["songFolder"] == "/Game/Ragnarock/CustomSongs"
     assert default["canFetch"] is True
     assert default["canSearch"] is True
@@ -56,6 +57,7 @@ def main() -> int:
             "songFolder": "C:/Songs",
             "httpGet": marker,
             "httpPost": marker,
+            "apiKey": "key",
             "downloadFile": marker,
             "unzipFile": marker,
             "listFiles": marker,
@@ -86,7 +88,9 @@ def main() -> int:
         "canDownloadZip",
         "canScanInstalled",
         "canVote",
-        "function Api.request(method, url, body, callback)",
+        "discoverApiKeyFromCustomApiUrls",
+        "sensitiveConsent",
+        "SetHeader",
         "httpRequest",
     ]:
         assert expected in source, f"missing capability source marker: {expected}"

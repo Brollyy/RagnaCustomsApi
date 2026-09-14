@@ -94,7 +94,7 @@ Song objects normalize fields needed by UI mods:
 }
 ```
 
-The library follows the documented catalog API (`https://ragnacustoms.com/api/search/<term>`, `https://ragnacustoms.com/api/song/<id>`, `https://ragnacustoms.com/api/song/check-updates`, and `https://ragnacustoms.com/api/song-list/<id>`) and falls back to public web-page parsing where needed. Catalog requests use `X-API-Key` when `apiKey` is configured.
+The library follows the [documented RagnaCustoms catalog API](https://ragnacustoms.com/api/docs) and falls back to public web-page parsing where needed. Catalog requests use `X-API-Key` when `apiKey` is configured.
 
 The UI helpers turn normalized song data into stable display rows. `toUiSong` adds formatted title, artist, difficulty, duration, vote, install-state, and URL fields; `toUiSongs`, `searchUi`, and `getSongUi` apply the same projection to lists and details.
 
@@ -109,7 +109,7 @@ C:\Users\...\Documents\Ragnarock\CustomSongs
 ...\Steam\steamapps\common\Ragnarock\Ragnarock\CustomSongs
 ```
 
-Set `songFolder` to the `CustomSongs` directory when using zip downloads. When loaded from UE4SS, the library infers the Steam-install path from `.../Ragnarock/Binaries/Win64/Mods/RagnaCustomsApi/Scripts/main.lua` and defaults to `.../Ragnarock/CustomSongs`. `installSong` uses the RagnaCustoms one-click URL by default. `downloadSong` creates one subfolder per song id, downloads from `https://api.ragnacustoms.com/songs/download/<id>` or `.../<apiKey>`, and extracts it there.
+Set `songFolder` to the `CustomSongs` directory when using zip downloads. When loaded from UE4SS, the library infers the Steam-install path from `.../Ragnarock/Binaries/Win64/Mods/RagnaCustomsApi/Scripts/main.lua` and defaults to `.../Ragnarock/CustomSongs`. `installSong` uses the RagnaCustoms one-click URL by default. `downloadSong` creates one subfolder per song id, downloads from `https://api.ragnacustoms.com/songs/download/<id>` with `X-API-Key` when configured, and extracts it there.
 
 Use `scanInstalledSongs()` to inspect the resolved `CustomSongs` folder. Downloads made through this library write `.id` and `.hash` marker files into each song folder, and the scanner also recognizes existing folders that contain `info.dat` or use a numeric folder name. `getInstalledSong(songOrId)`, `isInstalled(songOrId)`, and `compareInstalledWithUpdates()` expose that local state for consumer UIs.
 
@@ -191,11 +191,7 @@ RagnaCustoms.upvote(song)
 RagnaCustoms.downvote(song)
 ```
 
-The generic async transport is available for arbitrary endpoints:
-
-```lua
-RagnaCustoms.request("GET", "https://example.invalid/mod-endpoint", nil, function(response, err) end)
-```
+The asynchronous `httpRequest` hook and built-in VaRest adapter are internal transports for API operations; the public API does not expose arbitrary third-party callouts.
 
 ## Notes
 

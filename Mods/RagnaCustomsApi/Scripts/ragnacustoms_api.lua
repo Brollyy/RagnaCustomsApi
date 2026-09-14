@@ -52,6 +52,7 @@ local state = {
     },
     subscribers = {},
     activeRequests = {},
+    requestSerial = 0,
     status = {
         ready = false,
         loading = false,

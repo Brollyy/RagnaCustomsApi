@@ -91,6 +91,7 @@ def main() -> int:
         "discoverApiKeyFromCustomApiUrls",
         "sensitiveConsent",
         "SetHeader",
+        "requestSerial = 0",
         "httpRequest",
     ]:
         assert expected in source, f"missing capability source marker: {expected}"

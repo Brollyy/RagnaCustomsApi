@@ -1,11 +1,12 @@
 local Api = {
-    VERSION = "0.2.3",
+    VERSION = "0.3.0",
 }
 
 local state = {
     config = {
         baseUrl = "https://ragnacustoms.com",
-        apiBaseUrl = "https://api.ragnacustoms.com",
+        apiBaseUrl = "https://ragnacustoms.com",
+        downloadBaseUrl = "https://api.ragnacustoms.com",
         preferApi = true,
         cacheTtlSeconds = 300,
         maxPreloadPages = 1,
@@ -20,7 +21,6 @@ local state = {
         gameDir = nil,
         apiKey = nil,
         headers = {},
-        useWanApi = false,
         gameConfigPath = nil,
         httpRequest = nil,
         httpGet = nil,
@@ -49,8 +49,6 @@ local state = {
     },
     subscribers = {},
     activeRequests = {},
-    voteGenerations = {},
-    requestSerial = 0,
     status = {
         ready = false,
         loading = false,
@@ -289,54 +287,6 @@ local function unwrapRemoteValue(value)
     return value
 end
 
-local function redactEndpoint(value)
-    local endpoint = tostring(value or "")
-    return endpoint:gsub("(/wanapi/score/)[^/%?#]+", "%1[redacted]")
-end
-
-local function deriveVoteEndpoint(scoreEndpoint)
-    local endpoint = trim(scoreEndpoint)
-    local scheme, host, path = endpoint:match("^(https?)://([^/%?#]+)([^%?#]*)/*$")
-    if scheme == nil or host == nil or path == nil then
-        return nil, "configured custom leaderboard endpoint is not a valid HTTP URL"
-    end
-    local hostOnly = host:match("^%[([^%]]+)%]") or host:match("^([^:]+)") or host
-    if scheme == "http" and hostOnly ~= "127.0.0.1" and hostOnly ~= "localhost" and hostOnly ~= "::1" then
-        return nil, "unencrypted custom leaderboard endpoints are allowed only on loopback"
-    end
-    if path:match("^/wanapi/score/[^/]+/?$") == nil then
-        return nil, "configured custom leaderboard endpoint must end with /wanapi/score/{apiKey}"
-    end
-    return endpoint:gsub("/+$", "") .. "/vote", nil
-end
-
-local function parseVoteResponse(content)
-    local text = tostring(content or "")
-    local errorCode = jsonStringField(text, "error")
-    if errorCode ~= nil then
-        return nil, {
-            code = errorCode,
-            message = jsonStringField(text, "message") or "vote request failed",
-        }
-    end
-    local upvotes = jsonNumberField(text, "upvotes")
-    local downvotes = jsonNumberField(text, "downvotes")
-    if upvotes == nil or downvotes == nil then
-        return nil, { code = "invalid_response", message = "vote response is missing counts" }
-    end
-    local currentVote = jsonStringField(text, "currentVote")
-    if currentVote ~= nil and currentVote ~= "up" and currentVote ~= "down" then
-        return nil, { code = "invalid_response", message = "vote response contains an invalid selection" }
-    end
-    return {
-        songId = jsonNumberField(text, "songId"),
-        beatmap = jsonStringField(text, "beatmap"),
-        currentVote = currentVote,
-        upvotes = upvotes,
-        downvotes = downvotes,
-    }, nil
-end
-
 local function splitCsv(value)
     local result = {}
     for part in tostring(value or ""):gmatch("[^,]+") do
@@ -481,8 +431,20 @@ local function defaultHttpGet(url)
     return readPipe(command)
 end
 
+local function requestHeaders()
+    local headers = {}
+    for name, value in pairs(state.config.headers or {}) do
+        headers[tostring(name)] = tostring(value)
+    end
+    if state.config.apiKey ~= nil and state.config.apiKey ~= "" then
+        headers["X-API-Key"] = tostring(state.config.apiKey)
+    end
+    return headers
+end
+
 local function defaultHttpPost(url, body)
-    local headerArgs = " -H " .. shellQuote("Content-Type: application/x-www-form-urlencoded")
+    local contentType = tostring(body or ""):match("^%s*{") and "application/json" or "application/x-www-form-urlencoded"
+    local headerArgs = " -H " .. shellQuote("Content-Type: " .. contentType)
     for name, value in pairs(state.config.headers or {}) do
         headerArgs = headerArgs .. " -H " .. shellQuote(tostring(name) .. ": " .. tostring(value))
     end
@@ -572,14 +534,14 @@ end
 
 local function httpGet(url)
     if type(state.config.httpGet) == "function" then
-        return state.config.httpGet(url, state.config)
+        return state.config.httpGet(url, state.config, requestHeaders())
     end
     return defaultHttpGet(url)
 end
 
 local function httpPost(url, body)
     if type(state.config.httpPost) == "function" then
-        return state.config.httpPost(url, body, state.config)
+        return state.config.httpPost(url, body, state.config, requestHeaders())
     end
     return defaultHttpPost(url, body)
 end
@@ -712,6 +674,12 @@ local function defaultHttpRequest(method, url, body, callback)
     local configured, configuredError = pcall(function()
         request:SetVerb(method == "GET" and 0 or 2)
         request:SetContentType(2)
+        for name, value in pairs(state.config.headers or {}) do
+            request:SetHeader(tostring(name), tostring(value))
+        end
+        if state.config.apiKey ~= nil and state.config.apiKey ~= "" then
+            request:SetHeader("X-API-Key", tostring(state.config.apiKey))
+        end
         if method ~= "GET" then
             local requestObject = unwrapRemoteValue(request:GetRequestObject())
             requestObject:DecodeJson(body or "{}", true)
@@ -789,7 +757,7 @@ end
 
 local function httpRequest(method, url, body, callback)
     if type(state.config.httpRequest) == "function" then
-        return state.config.httpRequest(method, url, body, callback, state.config)
+        return state.config.httpRequest(method, url, body, callback, state.config, requestHeaders())
     end
     return defaultHttpRequest(method, url, body, callback)
 end
@@ -915,9 +883,9 @@ local function parseApiSongObject(objectText)
         ragnabeat = ragnabeat,
         infoDatUrl = ragnabeat and joinUrl(state.config.baseUrl, ragnabeat) or nil,
         oneClickUrl = "ragnac://install/" .. tostring(id),
-        zipUrl = joinUrl(state.config.apiBaseUrl, "/songs/download/" .. tostring(id)),
+        zipUrl = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id)),
         apiDetailUrl = joinUrl(state.config.apiBaseUrl, "/api/song/" .. tostring(id)),
-        apiDownloadUrl = joinUrl(state.config.apiBaseUrl, "/songs/download/" .. tostring(id)),
+        apiDownloadUrl = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id)),
         coverImageExtension = jsonStringAny(objectText, { "CoverImageExtension", "coverImageExtension", "cover_image_extension" }),
         twitchCode = "!rc " .. tostring(id),
     }
@@ -1109,55 +1077,6 @@ local function recordInstalledMetadata(targetDir, songOrId)
     end
 end
 
-local function scoreEndpointFromRuntime()
-    if type(FindFirstOf) ~= "function" then
-        return nil
-    end
-    for _, className in ipairs({ "RagnarockGameInstance", "BP_RagnarockGameInstance_C", "GameInstance" }) do
-        local instance = safeObjectCall(function()
-            return FindFirstOf(className)
-        end, nil)
-        if instance ~= nil then
-            local urls = safeObjectCall(function()
-                return instance:GetCustomApiURLs()
-            end, nil)
-            if type(urls) == "table" then
-                for _, value in pairs(urls) do
-                    local endpoint = tostring(unwrapRemoteValue(value) or "")
-                    if deriveVoteEndpoint(endpoint) ~= nil then
-                        return endpoint
-                    end
-                end
-            end
-        end
-    end
-    return nil
-end
-
-local function scoreEndpointFromConfig()
-    local candidates = {}
-    if state.config.gameConfigPath ~= nil and state.config.gameConfigPath ~= "" then
-        table.insert(candidates, state.config.gameConfigPath)
-    end
-    if os ~= nil and type(os.getenv) == "function" then
-        local localAppData = os.getenv("LOCALAPPDATA")
-        if localAppData ~= nil and localAppData ~= "" then
-            table.insert(candidates, joinPath(localAppData, "Ragnarock/Saved/Config/WindowsNoEditor/Game.ini"))
-        end
-    end
-    for _, path in ipairs(candidates) do
-        local content = readTextFile(path)
-        if content ~= nil then
-            for endpoint in tostring(content):gmatch('CustomApiURLs%s*=%s*"([^"]+)"') do
-                if deriveVoteEndpoint(endpoint) ~= nil then
-                    return endpoint
-                end
-            end
-        end
-    end
-    return nil
-end
-
 function Api.configure(options)
     for key, value in pairs(options or {}) do
         state.config[key] = value
@@ -1176,16 +1095,11 @@ function Api.getConfig()
     return copy
 end
 
-local function discoverWanApiScoreEndpoint()
-    if state.config.useWanApi ~= true then
-        return setError("WanApi voting is opt-in; configure useWanApi=true")
+function Api.request(method, url, body, callback)
+    if url == nil or trim(url) == "" then
+        return setError("request URL is required")
     end
-    local endpoint = scoreEndpointFromRuntime() or scoreEndpointFromConfig()
-    if endpoint == nil then
-        return setError("configured custom leaderboard score endpoint was not found")
-    end
-    emit("vote.endpoint.discovered", { endpoint = redactEndpoint(endpoint) })
-    return endpoint
+    return httpRequest(method or "GET", url, body, callback)
 end
 
 function Api.setRuntimePaths(paths)
@@ -1240,11 +1154,6 @@ function Api.getCapabilities()
     local hasUnzip = type(state.config.unzipFile) == "function" or hasShell
     local hasListFiles = type(state.config.listFiles) == "function" or hasShell
     local hasOpenUrl = type(state.config.openUrl) == "function"
-    local scoreEndpoint = nil
-    if state.config.useWanApi == true then
-        scoreEndpoint = scoreEndpointFromRuntime() or scoreEndpointFromConfig()
-    end
-    local canWanApiVote = scoreEndpoint ~= nil and deriveVoteEndpoint(scoreEndpoint) ~= nil and hasHttpRequest
     local canAuthenticatedVote = type(state.config.httpPost) == "function"
 
     return {
@@ -1275,12 +1184,10 @@ function Api.getCapabilities()
         canExtractZip = hasSongFolder and hasDownload and hasUnzip,
         canScanInstalled = hasSongFolder and hasListFiles,
         canWriteInstallMetadata = hasSongFolder and (type(state.config.writeFile) == "function" or io ~= nil),
-        canVote = canAuthenticatedVote or canWanApiVote,
-        voteConfigured = canAuthenticatedVote or canWanApiVote,
+        canVote = canAuthenticatedVote or hasHttpPost,
+        voteConfigured = canAuthenticatedVote or hasHttpPost,
         canAuthenticatedVote = canAuthenticatedVote,
-        canWanApiVote = canWanApiVote,
-        scoreEndpoint = scoreEndpoint and redactEndpoint(scoreEndpoint) or nil,
-        voteMode = state.config.useWanApi == true and "wanapi" or "authenticated",
+        voteMode = "api",
     }
 end
 
@@ -1339,8 +1246,8 @@ function Api.urlsFor(songOrId)
     end
     return {
         oneClick = "ragnac://install/" .. tostring(id),
-        zip = joinUrl(state.config.apiBaseUrl, "/songs/download/" .. tostring(id)),
-        apiDownload = joinUrl(state.config.apiBaseUrl, "/songs/download/" .. tostring(id)),
+        zip = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id)),
+        apiDownload = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id)),
         apiDetail = joinUrl(state.config.apiBaseUrl, "/api/song/" .. tostring(id)),
         webZip = joinUrl(state.config.baseUrl, "/songs/ddl/" .. tostring(id)),
         preview = joinUrl(state.config.baseUrl, "/song/partial/preview/" .. tostring(id)),
@@ -1445,6 +1352,72 @@ function Api.getSongList(listId)
         songs = songs,
     })
     return songs
+end
+
+function Api.getLastPlayed(results)
+    results = tonumber(results) or 10
+    return fetchApiSongs("/api/songs/last-played/" .. tostring(results))
+end
+
+function Api.getLastUploaded(results)
+    results = tonumber(results) or 10
+    return fetchApiSongs("/api/songs/last-uploaded/" .. tostring(results))
+end
+
+function Api.getTopRated(results, days)
+    results = tonumber(results) or 10
+    days = tonumber(days) or 30
+    return fetchApiSongs("/api/songs/top-rated/" .. tostring(results) .. "/" .. tostring(days))
+end
+
+local function parseApiStringCollection(json, keys)
+    local values, seen = {}, {}
+    for objectText in tostring(json or ""):gmatch("{[^{}]-}") do
+        local value = jsonStringAny(objectText, keys)
+        if value ~= nil and value ~= "" and not seen[value] then
+            seen[value] = true
+            table.insert(values, value)
+        end
+    end
+    for value in tostring(json or ""):gmatch('"([^"{}]+)"') do
+        if not seen[value] and value ~= "name" and value ~= "Name" and value ~= "mapper" and value ~= "Mapper" then
+            seen[value] = true
+            table.insert(values, value)
+        end
+    end
+    return values
+end
+
+function Api.searchCategories(query)
+    local json, err = httpGet(joinUrl(state.config.apiBaseUrl, "/api/song-categories?q=" .. urlEncode(query or "")))
+    if err then return nil, err end
+    return parseApiStringCollection(json, { "name", "Name", "category", "Category" })
+end
+
+function Api.searchMappers(query)
+    local json, err = httpGet(joinUrl(state.config.apiBaseUrl, "/api/mapper?q=" .. urlEncode(query or "")))
+    if err then return nil, err end
+    return parseApiStringCollection(json, { "name", "Name", "mapper", "Mapper" })
+end
+
+function Api.getSongVote(songOrId)
+    local id = type(songOrId) == "table" and songOrId.id or songOrId
+    if id == nil or trim(id) == "" then return setError("missing song id") end
+    return httpGet(joinUrl(state.config.apiBaseUrl, "/api/song/" .. urlEncode(id) .. "/vote"))
+end
+
+function Api.reviewSong(songOrId, review)
+    local id = type(songOrId) == "table" and songOrId.id or songOrId
+    if id == nil or trim(id) == "" then return setError("missing song id") end
+    review = review or {}
+    local fields, encoded = { "funFactor", "rhythm", "patternQuality", "readability", "flow", "levelQuality", "feedback" }, {}
+    for _, field in ipairs(fields) do
+        if review[field] ~= nil then
+            local value = review[field]
+            table.insert(encoded, jsonEscape(field) .. ":" .. (type(value) == "number" and tostring(value) or jsonEscape(value)))
+        end
+    end
+    return httpPost(joinUrl(state.config.apiBaseUrl, "/api/song/" .. urlEncode(id) .. "/review"), "{" .. table.concat(encoded, ",") .. "}")
 end
 
 function Api.search(query, options)
@@ -1773,11 +1746,12 @@ function Api.getSong(songOrId, options)
         url = joinUrl(state.config.baseUrl, "/song/" .. seed.slug)
     end
     if state.config.preferApi and not options.html and seed.id ~= nil then
+        local detailPath = options.details and "/api/song/details/" or "/api/song/"
         emit("song.started", {
             song = seed,
-            url = joinUrl(state.config.apiBaseUrl, "/api/song/" .. tostring(seed.id)),
+            url = joinUrl(state.config.apiBaseUrl, detailPath .. tostring(seed.id)),
         })
-        local apiSongs, apiErr = fetchApiSongs("/api/song/" .. tostring(seed.id))
+        local apiSongs, apiErr = fetchApiSongs(detailPath .. tostring(seed.id))
         if apiSongs ~= nil and apiSongs[1] ~= nil then
             local detail = mergeSong(seed, apiSongs[1])
             state.cache.byId[tostring(detail.id)] = detail
@@ -1898,7 +1872,7 @@ function Api.downloadSong(songOrId, options)
     local zipPath = joinPath(targetDir, tostring(id) .. ".zip")
     local urls = Api.urlsFor(id)
     if state.config.apiKey ~= nil and state.config.apiKey ~= "" then
-        urls.zip = joinUrl(state.config.apiBaseUrl, "/songs/download/" .. tostring(id) .. "/" .. tostring(state.config.apiKey))
+        urls.zip = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id) .. "/" .. tostring(state.config.apiKey))
     end
     local downloaded, err
     if type(state.config.downloadFile) == "function" then
@@ -1954,136 +1928,6 @@ function Api.downloadSong(songOrId, options)
     return result
 end
 
-local function completeVoteCallback(callback, payload)
-    if type(callback) == "function" then
-        safeCall(callback, payload)
-    end
-end
-
-local function resolveVoteScoreEndpoint(options)
-    options = options or {}
-    if options.useWanApi == true or state.config.useWanApi == true then
-        return discoverWanApiScoreEndpoint()
-    end
-    return nil, "WanApi voting is disabled; configure useWanApi=true"
-end
-
-local function performVoteRequest(method, beatmap, direction, callback, options)
-    options = options or {}
-    local cleanBeatmap = trim(beatmap)
-    if cleanBeatmap == "" then
-        return setError("beatmap hash is required")
-    end
-    if direction ~= nil and direction ~= "up" and direction ~= "down" then
-        return setError("vote direction must be 'up', 'down', or nil")
-    end
-
-    local scoreEndpoint, scoreEndpointError = resolveVoteScoreEndpoint(options)
-    if scoreEndpoint == nil then
-        return setError(scoreEndpointError or Api.lastError())
-    end
-    local voteEndpoint, endpointError = deriveVoteEndpoint(scoreEndpoint)
-    if voteEndpoint == nil then
-        return setError(endpointError)
-    end
-
-    state.requestSerial = state.requestSerial + 1
-    local generation = state.requestSerial
-    state.voteGenerations[cleanBeatmap] = generation
-    local url = voteEndpoint
-    local body = nil
-    if method == "GET" then
-        url = url .. "?beatmap=" .. urlEncode(cleanBeatmap)
-    else
-        body = '{"beatmap":"' .. jsonEscape(cleanBeatmap) .. '","direction":'
-            .. (direction == nil and "null" or ('"' .. direction .. '"')) .. "}"
-    end
-
-    emit("vote.started", {
-        beatmap = cleanBeatmap,
-        direction = direction,
-        generation = generation,
-    })
-    local transportId = httpRequest(method, url, body, function(response, transportError)
-        if state.voteGenerations[cleanBeatmap] ~= generation then
-            emit("vote.stale", { beatmap = cleanBeatmap, generation = generation })
-            return
-        end
-        if transportError ~= nil then
-            local failed = {
-                ok = false,
-                beatmap = cleanBeatmap,
-                generation = generation,
-                error = transportError,
-            }
-            state.lastError = transportError.message or transportError.code
-            emit("vote.failed", failed)
-            completeVoteCallback(callback, failed)
-            return
-        end
-
-        local status = tonumber(response and response.status) or 0
-        local parsed, parseError
-        if status < 200 or status >= 300 then
-            parseError = { code = "http_error", message = "vote server returned HTTP " .. tostring(status) }
-        else
-            parsed, parseError = parseVoteResponse(response and response.body or "")
-        end
-        if status < 200 or status >= 300 or parsed == nil then
-            local failed = {
-                ok = false,
-                beatmap = cleanBeatmap,
-                generation = generation,
-                status = status,
-                error = parseError or { code = "invalid_response", message = "vote response is invalid" },
-            }
-            state.lastError = failed.error.message or failed.error.code
-            emit("vote.failed", failed)
-            completeVoteCallback(callback, failed)
-            return
-        end
-        if parsed.beatmap ~= nil and parsed.beatmap ~= cleanBeatmap then
-            local failed = {
-                ok = false,
-                beatmap = cleanBeatmap,
-                generation = generation,
-                status = status,
-                error = { code = "mismatched_response", message = "vote response belongs to another beatmap" },
-            }
-            emit("vote.failed", failed)
-            completeVoteCallback(callback, failed)
-            return
-        end
-
-        local completed = {
-            ok = true,
-            beatmap = cleanBeatmap,
-            generation = generation,
-            status = status,
-            state = parsed,
-        }
-        state.lastError = nil
-        emit("vote.completed", completed)
-        completeVoteCallback(callback, completed)
-    end)
-    if transportId == nil then
-        return nil, "vote transport could not start"
-    end
-    return generation
-end
-
-function Api.getWanApiVote(beatmap, callback, options)
-    return performVoteRequest("GET", beatmap, nil, callback, options)
-end
-
-function Api.setWanApiVote(beatmap, direction, callback, options)
-    return performVoteRequest("PUT", beatmap, direction, callback, options)
-end
-
-function Api.clearWanApiVote(beatmap, callback, options)
-    return Api.setWanApiVote(beatmap, nil, callback, options)
-end
-
 function Api.vote(songOrId, direction, options)
     options = options or {}
     local id = type(songOrId) == "table" and songOrId.id or songOrId
@@ -2094,9 +1938,9 @@ function Api.vote(songOrId, direction, options)
     if cleanDirection ~= "up" and cleanDirection ~= "down" then
         return setError("vote direction must be 'up' or 'down'")
     end
-    local path = cleanDirection == "up" and "/song-vote/upvote/" or "/song-vote/downvote/"
+    local path = cleanDirection == "up" and "/api/song/" .. urlEncode(id) .. "/vote/up" or "/api/song/" .. urlEncode(id) .. "/vote/down"
     emit("vote.started", { id = id, direction = cleanDirection })
-    local response, err = httpPost(joinUrl(state.config.baseUrl, path .. urlEncode(id)), "")
+    local response, err = httpPost(joinUrl(state.config.apiBaseUrl, path), "")
     if err then
         emit("vote.failed", { id = id, direction = cleanDirection, error = err })
         return nil, err
@@ -2118,9 +1962,6 @@ Api._internals = {
     parseSongDetail = parseSongDetail,
     urlEncode = urlEncode,
     stripTags = stripTags,
-    deriveVoteEndpoint = deriveVoteEndpoint,
-    parseVoteResponse = parseVoteResponse,
-    redactEndpoint = redactEndpoint,
     archivePathIsSafe = archivePathIsSafe,
 }
 

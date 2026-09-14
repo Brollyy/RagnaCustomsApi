@@ -1,6 +1,6 @@
 {
   "modId": "RagnaCustomsApi",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "globals": [
     "RagnaCustomsApi",
     "RagnaCustoms"
@@ -15,6 +15,11 @@
       "name": "getConfig",
       "category": "config",
       "signature": "getConfig()"
+    },
+    {
+      "name": "request",
+      "category": "transport",
+      "signature": "request(method, url, body, callback)"
     },
     {
       "name": "setRuntimePaths",
@@ -92,6 +97,31 @@
       "signature": "getSongList(listId)"
     },
     {
+      "name": "getLastPlayed",
+      "category": "catalog",
+      "signature": "getLastPlayed(results)"
+    },
+    {
+      "name": "getLastUploaded",
+      "category": "catalog",
+      "signature": "getLastUploaded(results)"
+    },
+    {
+      "name": "getTopRated",
+      "category": "catalog",
+      "signature": "getTopRated(results, days)"
+    },
+    {
+      "name": "searchCategories",
+      "category": "catalog",
+      "signature": "searchCategories(query)"
+    },
+    {
+      "name": "searchMappers",
+      "category": "catalog",
+      "signature": "searchMappers(query)"
+    },
+    {
       "name": "search",
       "category": "search",
       "signature": "search(query, options)"
@@ -152,6 +182,16 @@
       "signature": "getSong(songOrId, options)"
     },
     {
+      "name": "getSongVote",
+      "category": "voting",
+      "signature": "getSongVote(songOrId)"
+    },
+    {
+      "name": "reviewSong",
+      "category": "voting",
+      "signature": "reviewSong(songOrId, review)"
+    },
+    {
       "name": "openOneClick",
       "category": "install",
       "signature": "openOneClick(songOrId)"
@@ -165,21 +205,6 @@
       "name": "downloadSong",
       "category": "install",
       "signature": "downloadSong(songOrId, options)"
-    },
-    {
-      "name": "getWanApiVote",
-      "category": "wanapi",
-      "signature": "getWanApiVote(beatmap, callback, options)"
-    },
-    {
-      "name": "setWanApiVote",
-      "category": "wanapi",
-      "signature": "setWanApiVote(beatmap, direction, callback, options)"
-    },
-    {
-      "name": "clearWanApiVote",
-      "category": "wanapi",
-      "signature": "clearWanApiVote(beatmap, callback, options)"
     },
     {
       "name": "vote",

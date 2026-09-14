@@ -14,11 +14,10 @@ def capabilities(config: dict) -> dict:
     has_song_folder = bool(song_folder)
     has_shell = config.get("allowShell") is True
     has_http_get = callable(config.get("httpGet")) or has_shell
-    has_http_request = callable(config.get("httpRequest"))
+    has_http_post = callable(config.get("httpPost")) or has_shell
     has_download = callable(config.get("downloadFile")) or has_shell
     has_unzip = callable(config.get("unzipFile")) or has_shell
     has_list_files = callable(config.get("listFiles")) or has_shell
-    vote_configured = config.get("useWanApi") is True and config.get("runtimeWanApi") is True
     return {
         "songFolder": song_folder,
         "canFetch": has_http_get,
@@ -29,8 +28,8 @@ def capabilities(config: dict) -> dict:
         "canDownloadZip": has_song_folder and has_download,
         "canExtractZip": has_song_folder and has_download and has_unzip,
         "canScanInstalled": has_song_folder and has_list_files,
-        "canVote": vote_configured and has_http_request,
-        "voteConfigured": vote_configured,
+        "canVote": has_http_post,
+        "voteConfigured": has_http_post,
     }
 
 
@@ -49,20 +48,18 @@ def main() -> int:
     assert default["canDownloadZip"] is True
     assert default["canExtractZip"] is True
     assert default["canScanInstalled"] is True
-    assert default["canVote"] is False
+    assert default["canVote"] is True
 
     hooked = capabilities(
         {
             "allowShell": False,
             "songFolder": "C:/Songs",
             "httpGet": marker,
-            "httpRequest": marker,
+            "httpPost": marker,
             "downloadFile": marker,
             "unzipFile": marker,
             "listFiles": marker,
             "openUrl": marker,
-            "useWanApi": True,
-            "runtimeWanApi": True,
         }
     )
     assert hooked["canFetch"] is True
@@ -72,7 +69,7 @@ def main() -> int:
     assert hooked["canScanInstalled"] is True
     assert hooked["canVote"] is True
 
-    implicit = capabilities({"allowShell": False, "httpRequest": marker})
+    implicit = capabilities({"allowShell": False})
     assert implicit["canVote"] is False
 
     disabled = capabilities({"allowShell": False})
@@ -89,6 +86,8 @@ def main() -> int:
         "canDownloadZip",
         "canScanInstalled",
         "canVote",
+        "function Api.request(method, url, body, callback)",
+        "httpRequest",
     ]:
         assert expected in source, f"missing capability source marker: {expected}"
 

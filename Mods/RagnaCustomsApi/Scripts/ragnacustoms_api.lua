@@ -552,6 +552,44 @@ local function safeObjectCall(callback, fallback)
     return fallback
 end
 
+local function responseString(value)
+    if value == nil then
+        return nil
+    end
+    if type(value) == "string" then
+        return value
+    end
+    local stringValue = safeObjectCall(function()
+        return value:ToString()
+    end, nil)
+    if stringValue ~= nil then
+        return tostring(stringValue)
+    end
+    local unwrapped = unwrapRemoteValue(value)
+    if type(unwrapped) == "string" then
+        return unwrapped
+    end
+    return nil
+end
+
+local function responseBody(request)
+    -- VaRest returns the response as an FString userdata on the UE4SS path.
+    -- Reading ResponseContent after the call can expose only a stale/truncated
+    -- reflected value, so prefer the value returned by the accessor itself.
+    local returned = safeObjectCall(function()
+        return request:GetResponseContentAsString(false)
+    end, nil)
+    local returnedText = responseString(returned)
+    if returnedText ~= nil and returnedText ~= "" then
+        return returnedText
+    end
+
+    local property = safeObjectCall(function()
+        return request.ResponseContent
+    end, nil)
+    return responseString(property) or ""
+end
+
 local function constructVaRestRequest()
     if type(StaticFindObject) ~= "function" or type(StaticConstructObject) ~= "function" then
         return nil, "VaRest construction is unavailable"
@@ -645,10 +683,7 @@ local function defaultHttpRequest(method, url, body, callback)
         local responseCode = safeObjectCall(function()
             return tonumber(unwrapRemoteValue(request:GetResponseCode()))
         end, 0)
-        local content = safeObjectCall(function()
-            request:GetResponseContentAsString(false)
-            return request.ResponseContent:ToString()
-        end, "")
+        local content = responseBody(request)
         print("[RagnaCustomsApi] HTTP transport stage=complete code=" .. tostring(responseCode)
             .. " bytes=" .. tostring(#tostring(content)) .. "\n")
         if responseCode > 0 then
@@ -704,10 +739,7 @@ local function defaultHttpRequest(method, url, body, callback)
             -- and do not transition the reflected request status reliably.
             -- A positive HTTP response code is still definitive completion.
             if responseCode > 0 then
-                local content = safeObjectCall(function()
-                    request:GetResponseContentAsString(false)
-                    return request.ResponseContent:ToString()
-                end, "")
+                local content = responseBody(request)
                 finish({ status = responseCode, body = content }, nil)
                 return
             end
@@ -716,10 +748,7 @@ local function defaultHttpRequest(method, url, body, callback)
                 return
             end
             if status == 3 then
-                local content = safeObjectCall(function()
-                    request:GetResponseContentAsString(false)
-                    return request.ResponseContent:ToString()
-                end, "")
+                local content = responseBody(request)
                 if responseCode > 0 then
                     finish({ status = responseCode, body = content }, nil)
                 else

@@ -12,7 +12,9 @@ Supported options:
 ```lua
 {
     baseUrl = "https://ragnacustoms.com",
-    apiBaseUrl = "https://api.ragnacustoms.com",
+    apiBaseUrl = "https://ragnacustoms.com",
+    downloadBaseUrl = "https://api.ragnacustoms.com",
+    transport = "varest", -- "varest" (default) or "shell"
     preferApi = true,
     cacheTtlSeconds = 300,
     maxPreloadPages = 1,
@@ -25,13 +27,12 @@ Supported options:
     scriptDir = nil,
     win64Dir = nil,
     gameDir = nil,
-    apiKey = nil, -- consumer API key for authenticated API, download, and website/app vote endpoints
+    apiKey = nil, -- consumer API key sent as X-API-Key for documented API requests
     headers = {},
-    useWanApi = false, -- opt in to the game's configured /wanapi/score/{key} contract
     gameConfigPath = nil,
-    httpGet = nil,
-    httpPost = nil,
-    httpRequest = nil,
+    httpGet = nil, -- function(url, config, headers)
+    httpPost = nil, -- function(url, body, config, headers)
+    httpRequest = nil, -- function(method, url, body, callback, config, headers)
     downloadFile = nil,
     unzipFile = nil,
     openUrl = nil,
@@ -44,6 +45,12 @@ Supported options:
 ```
 
 `getConfig()` returns a shallow copy of the active configuration table.
+
+Every documented `/api` request requires an API key. The built-in shell and VaRest transports send it as `X-API-Key`; injected transport hooks receive a computed headers table as their final argument and should forward it unchanged.
+
+VaRest is the default transport in-game. Catalog methods return a request handle and publish their results through the existing `*.completed`/`*.failed` events. Set `transport = "shell"` for the synchronous shell/custom `httpGet`/`httpPost` behavior.
+
+The explicit `apiKey` is never exposed by `getConfig()`.
 
 ## Status And Events
 
@@ -90,6 +97,20 @@ installed.compare.completed
 vote.started
 vote.completed
 vote.failed
+catalog.completed
+catalog.failed
+categories.completed
+categories.failed
+mappers.completed
+mappers.failed
+vote.details.completed
+vote.details.failed
+review.completed
+review.failed
+search.ui.completed
+search.ui.failed
+song.ui.completed
+song.ui.failed
 ```
 
 `on("*", callback)` receives `{ event = "...", payload = ... }`.
@@ -104,6 +125,7 @@ Use this before rendering install/search/vote controls. The result describes cur
 
 ```lua
 {
+    transport = "varest",
     canFetch = true,
     canSearch = true,
     canPreload = true,
@@ -114,6 +136,7 @@ Use this before rendering install/search/vote controls. The result describes cur
     canScanInstalled = true,
     canVote = false,
     voteConfigured = false,
+    canAsyncFetch = true,
     shellAllowed = true,
     songFolder = ".../Ragnarock/CustomSongs",
     transports = {
@@ -171,9 +194,19 @@ local playlist = RagnaCustoms.getSongList(42)
 
 `preloadSongs` uses the in-memory cache until `cacheTtlSeconds` expires. `refreshSongs` forces a network refresh. `preloadAllSongs(maxPages)` keeps fetching pages until a page returns no songs or `maxPages` is reached.
 
-When `preferApi` is true, preload uses `GET /api/song/check-updates` from `apiBaseUrl` before falling back to public web pages.
+When `preferApi` is true, preload uses the documented `GET /api/song/check-updates` route from `apiBaseUrl` before falling back to public web pages. The documented API base is `https://ragnacustoms.com/api`.
 
 `checkUpdates()` exposes `GET /api/song/check-updates` directly. `getSongList(listId)` exposes `GET /api/song-list/<id>`.
+
+Catalog endpoints:
+
+```lua
+local played = RagnaCustoms.getLastPlayed(10)
+local uploaded = RagnaCustoms.getLastUploaded(10)
+local rated = RagnaCustoms.getTopRated(10, 30)
+local categories = RagnaCustoms.searchCategories("metal")
+local mappers = RagnaCustoms.searchMappers("alice")
+```
 
 ## Search
 
@@ -233,7 +266,7 @@ local detail = RagnaCustoms.getSong(6037)
 local detail = RagnaCustoms.getSong(song, { refresh = true })
 ```
 
-When `preferApi` is true, numeric IDs use `GET /api/song/<id>` from `apiBaseUrl`, so `getSong(6037)` can fetch details without a prior search. Public web detail fallback is slug-based, so if `preferApi` is false, call `search` or `preloadSongs` first or pass a song table with `detailUrl`.
+When `preferApi` is true, numeric IDs use `GET /api/song/<id>` from `apiBaseUrl`, so `getSong(6037)` can fetch details without a prior search. Pass `{ details = true }` to use `GET /api/song/details/<id>`. Public web detail fallback is slug-based, so if `preferApi` is false, call `search` or `preloadSongs` first or pass a song table with `detailUrl`.
 
 ## Downloads
 
@@ -250,7 +283,7 @@ local result = RagnaCustoms.downloadSong(song, {
 })
 ```
 
-By default `installSong` returns or opens the `ragnac://install/<id>` URL. Configure `openUrl` if the UE4SS runtime has a protocol-launch hook. `downloadSong` uses `GET /songs/download/<id>` from `apiBaseUrl`, appending `/<apiKey>` when configured.
+By default `installSong` returns or opens the `ragnac://install/<id>` URL. Configure `openUrl` if the UE4SS runtime has a protocol-launch hook. `downloadSong` uses `GET /songs/download/<id>` from `downloadBaseUrl` and sends `X-API-Key` when configured. The key is never placed in the URL.
 
 Result:
 
@@ -295,23 +328,23 @@ Installed entry shape:
 
 ## Voting
 
-The usual website/app voting routes use fixed server routes and the caller's authenticated website session. Provide an authenticated `httpPost` transport; the API key alone is not a browser session:
+The documented API voting routes use the configured API key. VaRest is the default transport; use `transport = "shell"` only when synchronous shell/custom HTTP behavior is desired:
 
 ```lua
 RagnaCustoms.configure({
-    httpPost = MyAuthenticatedPost,
+    transport = "varest",
 })
-RagnaCustoms.upvote(song) -- POST /song-vote/upvote/<song id>
-RagnaCustoms.downvote(song) -- POST /song-vote/downvote/<song id>
+RagnaCustoms.upvote(song) -- POST /api/song/<song id>/vote/up
+RagnaCustoms.downvote(song) -- POST /api/song/<song id>/vote/down
 ```
 
-WanApi is a separate opt-in surface. Set `useWanApi = true` when the game has configured `CustomApiURLs`; the library discovers the server-known `/wanapi/score/{apiKey}` route and does not require a second API-key setting:
+API-key catalog voting and reviews use the documented routes:
 
 ```lua
-RagnaCustoms.configure({ useWanApi = true })
-RagnaCustoms.getWanApiVote(beatmapHash, function(result) end)
-RagnaCustoms.setWanApiVote(beatmapHash, "up", function(result) end)
-RagnaCustoms.clearWanApiVote(beatmapHash, function(result) end)
+local vote = RagnaCustoms.getSongVote(song)
+RagnaCustoms.upvote(song) -- POST /api/song/<id>/vote/up
+RagnaCustoms.downvote(song) -- POST /api/song/<id>/vote/down
+RagnaCustoms.reviewSong(song, { funFactor = 5, rhythm = 5, patternQuality = 5, readability = 5 })
 ```
 
-WanApi requests use VaRest asynchronously, desired-state PUTs are retry-safe, and stale replies are ignored. Endpoint values remain internal and are redacted in status/events.
+The `httpRequest` hook and built-in VaRest adapter are internal transports for these API operations; arbitrary third-party callouts are not exposed through the public catalog API.

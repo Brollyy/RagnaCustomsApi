@@ -94,7 +94,7 @@ Song objects normalize fields needed by UI mods:
 }
 ```
 
-The library prefers the official app API (`https://api.ragnacustoms.com/api/search/<term>`, `https://api.ragnacustoms.com/api/song/<id>`, `https://api.ragnacustoms.com/api/song/check-updates`, and `https://api.ragnacustoms.com/api/song-list/<id>`) and falls back to public web-page parsing where needed.
+The library follows the [documented RagnaCustoms catalog API](https://ragnacustoms.com/api/docs) and falls back to public web-page parsing where needed. Catalog requests use `X-API-Key` when `apiKey` is configured.
 
 The UI helpers turn normalized song data into stable display rows. `toUiSong` adds formatted title, artist, difficulty, duration, vote, install-state, and URL fields; `toUiSongs`, `searchUi`, and `getSongUi` apply the same projection to lists and details.
 
@@ -109,17 +109,19 @@ C:\Users\...\Documents\Ragnarock\CustomSongs
 ...\Steam\steamapps\common\Ragnarock\Ragnarock\CustomSongs
 ```
 
-Set `songFolder` to the `CustomSongs` directory when using zip downloads. When loaded from UE4SS, the library infers the Steam-install path from `.../Ragnarock/Binaries/Win64/Mods/RagnaCustomsApi/Scripts/main.lua` and defaults to `.../Ragnarock/CustomSongs`. `installSong` uses the RagnaCustoms one-click URL by default. `downloadSong` creates one subfolder per song id, downloads from `https://api.ragnacustoms.com/songs/download/<id>` or `.../<apiKey>`, and extracts it there.
+Set `songFolder` to the `CustomSongs` directory when using zip downloads. When loaded from UE4SS, the library infers the Steam-install path from `.../Ragnarock/Binaries/Win64/Mods/RagnaCustomsApi/Scripts/main.lua` and defaults to `.../Ragnarock/CustomSongs`. `installSong` uses the RagnaCustoms one-click URL by default. `downloadSong` creates one subfolder per song id, downloads from `https://api.ragnacustoms.com/songs/download/<id>` with `X-API-Key` when configured, and extracts it there.
 
 Use `scanInstalledSongs()` to inspect the resolved `CustomSongs` folder. Downloads made through this library write `.id` and `.hash` marker files into each song folder, and the scanner also recognizes existing folders that contain `info.dat` or use a numeric folder name. `getInstalledSong(songOrId)`, `isInstalled(songOrId)`, and `compareInstalledWithUpdates()` expose that local state for consumer UIs.
 
 ## Transport Hooks
 
+VaRest is selected by default in-game and delivers catalog results through the existing events. Set `transport = "shell"` to use synchronous shell/custom HTTP hooks.
+
 The library supports these transport hooks:
 
 - `httpGet`: catalog, search, detail, update, and song-list reads.
-- `httpPost`: authenticated website/app voting routes (`/song-vote/upvote/<id>` and `/song-vote/downvote/<id>`).
-- `httpRequest`: asynchronous WanApi voting through Ragnarock's bundled VaRest plugin.
+- `httpPost`: authenticated API voting and review requests.
+- `httpRequest`: asynchronous API transport through a consumer hook or Ragnarock's bundled VaRest plugin.
 - `downloadFile` and `unzipFile`: song downloads and extraction.
 - `mkdirs`, `listFiles`, `readFile`, and `writeFile`: local song-folder discovery and install metadata.
 - `openUrl`: optional `ragnac://install/<id>` launching.
@@ -129,10 +131,10 @@ Consumers can inject the callback-shaped hooks when shell or VaRest transports a
 ```lua
 RagnaCustoms.configure({
     allowShell = false,
-    httpGet = function(url, config)
+    httpGet = function(url, config, headers)
         return MyHttpGet(url)
     end,
-    httpRequest = function(method, url, body, callback, config)
+    httpRequest = function(method, url, body, callback, config, headers)
         MyAsyncRequest(method, url, body, callback)
         return "request-id"
     end,
@@ -180,7 +182,7 @@ Use `RagnaCustoms.on("*", callback)` to observe all events. Use `RagnaCustoms.of
 
 ## Voting
 
-The library supports both server-known voting surfaces. The usual website/app routes take a numeric song id and require the caller's authenticated website session. Supply an `httpPost` hook that provides that session; the route paths are fixed by the library and are not configurable. The single `apiKey` remains available for authenticated API/download requests.
+The documented voting routes take a numeric song id and use the configured consumer API key through `X-API-Key`.
 
 ```lua
 RagnaCustoms.configure({
@@ -191,21 +193,8 @@ RagnaCustoms.upvote(song)
 RagnaCustoms.downvote(song)
 ```
 
-Mods that use the in-game WanApi contract can opt in by name. The game must provide `CustomApiURLs`; the mod does not need a second API-key setting.
-
-```lua
-RagnaCustoms.configure({
-    useWanApi = true,
-})
-
-RagnaCustoms.getWanApiVote(beatmapHash, function(result) end)
-RagnaCustoms.setWanApiVote(beatmapHash, "up", function(result) end)
-RagnaCustoms.setWanApiVote(beatmapHash, "down", function(result) end)
-RagnaCustoms.clearWanApiVote(beatmapHash, function(result) end)
-```
-
-Callbacks receive `{ ok = true, state = { currentVote, upvotes, downvotes, ... } }` or `{ ok = false, error = { code, message } }`. Requests are generation-checked so an older response cannot overwrite a newer selection. Endpoint values are kept internal and redacted in status/events.
+The asynchronous `httpRequest` hook and built-in VaRest adapter are internal transports for API operations; the public API does not expose arbitrary third-party callouts.
 
 ## Notes
 
-The current implementation is API-first for preload, search, details, song lists, update checks, and downloads. Public RagnaCustoms HTML parsing remains as a fallback for list/detail fields that are only available on site pages or when callers force `{ html = true }`. `baseUrl`, `apiBaseUrl`, and transport hooks are configurable; server-known vote routes are intentionally not consumer-configurable.
+The current implementation is API-first for preload, search, details, song lists, update checks, and downloads. Public RagnaCustoms HTML parsing remains as a fallback for list/detail fields that are only available on site pages or when callers force `{ html = true }`. `baseUrl`, `apiBaseUrl`, and transport hooks are configurable.

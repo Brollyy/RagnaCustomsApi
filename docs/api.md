@@ -46,7 +46,7 @@ Supported options:
 
 `getConfig()` returns a shallow copy of the active configuration table.
 
-Every documented `/api` request requires an API key. The built-in shell and VaRest transports send it as `X-API-Key`; injected transport hooks receive a computed headers table as their final argument and should forward it unchanged.
+Catalog endpoints are public; voting and review endpoints require an API key. When configured, the built-in shell and VaRest transports send it as `X-API-Key`; injected transport hooks receive a computed headers table as their final argument and should forward it unchanged.
 
 VaRest is the default transport in-game. Catalog methods return a request handle and publish their results through the existing `*.completed`/`*.failed` events. Set `transport = "shell"` for the synchronous shell/custom `httpGet`/`httpPost` behavior.
 

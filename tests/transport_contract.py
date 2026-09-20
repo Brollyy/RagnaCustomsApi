@@ -14,6 +14,9 @@ def main() -> int:
     assert "return value:ToString()" in source
     assert source.count("request:GetResponseContentAsString(false)") == 1
     assert "request.ResponseContent:ToString()" not in source
+    assert "local function apiRequest(method, path, body, callback)" in source
+    assert source.count("return httpRequest(method, url, body, complete)") == 1
+    assert "return apiRequest(\"POST\", path, \"\", function(response, err)" in source
     print("transport response-body contract: ok")
     return 0
 

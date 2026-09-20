@@ -78,6 +78,7 @@ preload.completed
 preload.failed
 ready
 updates.completed
+updates.failed
 songlist.completed
 songlist.failed
 search.started
@@ -94,6 +95,7 @@ download.failed
 installed.scan.completed
 installed.scan.failed
 installed.compare.completed
+installed.compare.failed
 vote.started
 vote.completed
 vote.failed
@@ -114,6 +116,8 @@ song.ui.failed
 ```
 
 `on("*", callback)` receives `{ event = "...", payload = ... }`.
+
+`vote.started`, `vote.completed`, and `vote.failed` describe a vote mutation (`upvote` or `downvote`). `vote.details.completed` and `vote.details.failed` describe the separate read-only `getSongVote` request.
 
 ## Capabilities
 

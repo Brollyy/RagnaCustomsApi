@@ -795,6 +795,41 @@ local function usesVaRest()
     return state.config.transport == "varest"
 end
 
+local function apiRequest(method, path, body, callback)
+    local url = joinUrl(state.config.apiBaseUrl, path)
+    local function complete(response, err)
+        if err ~= nil then
+            return callback(nil, err)
+        end
+        local status = tonumber(response and response.status)
+        if status ~= nil and (status < 200 or status >= 300) then
+            return callback(nil, {
+                code = "http_error",
+                status = status,
+                message = "API returned HTTP " .. tostring(status),
+            })
+        end
+        return callback(response, nil)
+    end
+    if usesVaRest() then
+        if not vaRestAvailable() then
+            return complete(nil, { code = "transport_unavailable", message = "VaRest transport is selected but unavailable" })
+        end
+        return httpRequest(method, url, body, complete)
+    end
+
+    local responseBody, err
+    if method == "GET" then
+        responseBody, err = httpGet(url)
+    else
+        responseBody, err = httpPost(url, body)
+    end
+    if err ~= nil then
+        return complete(nil, err)
+    end
+    return complete({ status = 200, body = responseBody }, nil)
+end
+
 local function listFromAnchors(fragment)
     local result = {}
     for label in tostring(fragment or ""):gmatch("<a[^>]*>(.-)</a>") do
@@ -936,26 +971,27 @@ local function parseApiSongs(json)
 end
 
 local function fetchApiSongs(path, callback)
-    local url = joinUrl(state.config.apiBaseUrl, path)
-    if type(callback) == "function" then
-        return httpRequest("GET", url, nil, function(response, err)
-            if err ~= nil then
-                callback(nil, err)
-                return
+    return apiRequest("GET", path, nil, function(response, err)
+        if err ~= nil then
+            if type(callback) == "function" then
+                return callback(nil, err)
             end
-            local status = tonumber(response and response.status) or 0
-            if status < 200 or status >= 300 then
-                callback(nil, { code = "http_error", message = "API returned HTTP " .. tostring(status) })
-                return
+            return nil, err
+        end
+        local status = tonumber(response and response.status) or 0
+        if status < 200 or status >= 300 then
+            local responseError = { code = "http_error", message = "API returned HTTP " .. tostring(status) }
+            if type(callback) == "function" then
+                return callback(nil, responseError)
             end
-            callback(parseApiSongs(response.body), nil)
-        end)
-    end
-    local json, err = httpGet(url)
-    if err then
-        return nil, err
-    end
-    return parseApiSongs(json)
+            return nil, responseError
+        end
+        local songs = parseApiSongs(response.body)
+        if type(callback) == "function" then
+            return callback(songs, nil)
+        end
+        return songs
+    end)
 end
 
 local function appendSongs(target, source)
@@ -1307,34 +1343,6 @@ function Api.preloadSongs(options)
         return state.cache.songs
     end
 
-    if usesVaRest() then
-        if not vaRestAvailable() then
-            return setError("VaRest transport is selected but unavailable")
-        end
-        state.status.loading = true
-        emit("preload.started", Api.getStatus())
-        if not state.config.preferApi then
-            state.status.loading = false
-            emit("preload.failed", { error = "VaRest transport requires API catalog mode", status = Api.getStatus() })
-            return setError("VaRest transport requires preferApi=true")
-        end
-        return fetchApiSongs("/api/song/check-updates", function(songs, err)
-            state.status.loading = false
-            if err ~= nil then
-                state.lastError = err.message or err
-                emit("preload.failed", { error = err, status = Api.getStatus() })
-                return
-            end
-            state.cache.songs = songs or {}
-            state.cache.songsAt = now()
-            state.status.ready = true
-            state.status.lastRefreshAt = state.cache.songsAt
-            rememberSongs(state.cache.songs)
-            emit("preload.completed", { songs = state.cache.songs, status = Api.getStatus() })
-            emit("ready", Api.getStatus())
-        end)
-    end
-
     state.status.loading = true
     emit("preload.started", Api.getStatus())
 
@@ -1342,26 +1350,11 @@ function Api.preloadSongs(options)
     if pageCount < 1 then
         pageCount = 1
     end
-    local songs = nil
-    if state.config.preferApi then
-        local apiSongs, apiErr = fetchApiSongs("/api/song/check-updates")
-        if apiSongs ~= nil and #apiSongs > 0 then
-            songs = apiSongs
-        elseif apiErr ~= nil then
-            state.lastError = apiErr
-        end
-    end
-
-    if songs == nil then
-        songs = {}
+    local function loadWebSongs()
+        local songs = {}
         for page = 1, pageCount do
             local pageSongs, err = fetchLibraryPage(nil, page)
             if err then
-                state.status.loading = false
-                emit("preload.failed", {
-                    error = err,
-                    status = Api.getStatus(),
-                })
                 return nil, err
             end
             if #pageSongs == 0 then
@@ -1369,19 +1362,39 @@ function Api.preloadSongs(options)
             end
             appendSongs(songs, pageSongs)
         end
+        return songs
     end
-    state.cache.songs = songs
-    state.cache.songsAt = now()
-    state.status.ready = true
-    state.status.loading = false
-    state.status.lastRefreshAt = state.cache.songsAt
-    rememberSongs(songs)
-    emit("preload.completed", {
-        songs = songs,
-        status = Api.getStatus(),
-    })
-    emit("ready", Api.getStatus())
-    return songs
+
+    local function finishPreload(songs, err)
+        state.status.loading = false
+        if err ~= nil then
+            state.lastError = err.message or err
+            emit("preload.failed", { error = err, status = Api.getStatus() })
+            return nil, err
+        end
+        state.cache.songs = songs or {}
+        state.cache.songsAt = now()
+        state.status.ready = true
+        state.status.lastRefreshAt = state.cache.songsAt
+        rememberSongs(state.cache.songs)
+        emit("preload.completed", { songs = state.cache.songs, status = Api.getStatus() })
+        emit("ready", Api.getStatus())
+        return state.cache.songs
+    end
+
+    if state.config.preferApi then
+        return fetchApiSongs("/api/song/check-updates", function(songs, err)
+            if (err ~= nil or songs == nil or #songs == 0) and not usesVaRest() then
+                songs, err = loadWebSongs()
+            end
+            return finishPreload(songs, err)
+        end)
+    end
+    if usesVaRest() then
+        return finishPreload(nil, { code = "transport_configuration", message = "VaRest transport requires preferApi=true" })
+    end
+    local songs, err = loadWebSongs()
+    return finishPreload(songs, err)
 end
 
 function Api.refreshSongs()
@@ -1394,34 +1407,21 @@ end
 
 function Api.checkUpdates(options)
     options = options or {}
-    if usesVaRest() then
-        if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-        return fetchApiSongs("/api/song/check-updates", function(songs, err)
-            if err ~= nil then
-                emit("updates.failed", { error = err })
-                return
+    return fetchApiSongs("/api/song/check-updates", function(songs, err)
+        if err ~= nil then
+            emit("updates.failed", { error = err })
+            if type(options.callback) == "function" then
+                return options.callback(nil, err)
             end
-            rememberSongs(songs)
-            emit("updates.completed", { songs = songs })
-        end)
-    end
-    if type(options.callback) == "function" then
-        return fetchApiSongs("/api/song/check-updates", function(songs, err)
-            if err ~= nil then options.callback(nil, err) return end
-            rememberSongs(songs)
-            emit("updates.completed", { songs = songs })
-            options.callback(songs, nil)
-        end)
-    end
-    local songs, err = fetchApiSongs("/api/song/check-updates")
-    if err then
-        return nil, err
-    end
-    rememberSongs(songs)
-    emit("updates.completed", {
-        songs = songs,
-    })
-    return songs
+            return nil, err
+        end
+        rememberSongs(songs)
+        emit("updates.completed", { songs = songs })
+        if type(options.callback) == "function" then
+            return options.callback(songs, nil)
+        end
+        return songs
+    end)
 end
 
 function Api.getSongList(listId, options)
@@ -1429,76 +1429,58 @@ function Api.getSongList(listId, options)
     if listId == nil or tostring(listId) == "" then
         return setError("song list id is required")
     end
-    if usesVaRest() then
-        if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-        return fetchApiSongs("/api/song-list/" .. urlEncode(listId), function(songs, err)
-            if err ~= nil then
-                emit("songlist.failed", { id = listId, error = err })
-                return
+    return fetchApiSongs("/api/song-list/" .. urlEncode(listId), function(songs, err)
+        if err ~= nil then
+            emit("songlist.failed", { id = listId, error = err })
+            if type(options.callback) == "function" then
+                return options.callback(nil, err)
             end
-            rememberSongs(songs)
-            emit("songlist.completed", { id = listId, songs = songs })
-        end)
-    end
-    if type(options.callback) == "function" then
-        return fetchApiSongs("/api/song-list/" .. urlEncode(listId), function(songs, err)
-            if err ~= nil then options.callback(nil, err) return end
-            rememberSongs(songs)
-            emit("songlist.completed", { id = listId, songs = songs })
-            options.callback(songs, nil)
-        end)
-    end
-    local songs, err = fetchApiSongs("/api/song-list/" .. urlEncode(listId))
-    if err then
-        emit("songlist.failed", {
-            id = listId,
-            error = err,
-        })
-        return nil, err
-    end
-    rememberSongs(songs)
-    emit("songlist.completed", {
-        id = listId,
-        songs = songs,
-    })
-    return songs
+            return nil, err
+        end
+        rememberSongs(songs)
+        emit("songlist.completed", { id = listId, songs = songs })
+        if type(options.callback) == "function" then
+            return options.callback(songs, nil)
+        end
+        return songs
+    end)
 end
 
 function Api.getLastPlayed(results, options)
     options = options or {}
     results = tonumber(results) or 10
-    if usesVaRest() then
-        if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-        return fetchApiSongs("/api/songs/last-played/" .. tostring(results), function(songs, err)
-            emit(err and "catalog.failed" or "catalog.completed", { endpoint = "last-played", songs = songs, error = err })
-        end)
-    end
-    return fetchApiSongs("/api/songs/last-played/" .. tostring(results), options.callback)
+    return fetchApiSongs("/api/songs/last-played/" .. tostring(results), function(songs, err)
+        emit(err and "catalog.failed" or "catalog.completed", { endpoint = "last-played", songs = songs, error = err })
+        if type(options.callback) == "function" then
+            return options.callback(songs, err)
+        end
+        return songs, err
+    end)
 end
 
 function Api.getLastUploaded(results, options)
     options = options or {}
     results = tonumber(results) or 10
-    if usesVaRest() then
-        if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-        return fetchApiSongs("/api/songs/last-uploaded/" .. tostring(results), function(songs, err)
-            emit(err and "catalog.failed" or "catalog.completed", { endpoint = "last-uploaded", songs = songs, error = err })
-        end)
-    end
-    return fetchApiSongs("/api/songs/last-uploaded/" .. tostring(results), options.callback)
+    return fetchApiSongs("/api/songs/last-uploaded/" .. tostring(results), function(songs, err)
+        emit(err and "catalog.failed" or "catalog.completed", { endpoint = "last-uploaded", songs = songs, error = err })
+        if type(options.callback) == "function" then
+            return options.callback(songs, err)
+        end
+        return songs, err
+    end)
 end
 
 function Api.getTopRated(results, days, options)
     options = options or {}
     results = tonumber(results) or 10
     days = tonumber(days) or 30
-    if usesVaRest() then
-        if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-        return fetchApiSongs("/api/songs/top-rated/" .. tostring(results) .. "/" .. tostring(days), function(songs, err)
-            emit(err and "catalog.failed" or "catalog.completed", { endpoint = "top-rated", songs = songs, error = err })
-        end)
-    end
-    return fetchApiSongs("/api/songs/top-rated/" .. tostring(results) .. "/" .. tostring(days), options.callback)
+    return fetchApiSongs("/api/songs/top-rated/" .. tostring(results) .. "/" .. tostring(days), function(songs, err)
+        emit(err and "catalog.failed" or "catalog.completed", { endpoint = "top-rated", songs = songs, error = err })
+        if type(options.callback) == "function" then
+            return options.callback(songs, err)
+        end
+        return songs, err
+    end)
 end
 
 local function parseApiStringCollection(json, keys)
@@ -1520,55 +1502,41 @@ local function parseApiStringCollection(json, keys)
 end
 
 function Api.searchCategories(query)
-    if usesVaRest() then
-        if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-        local path = "/api/song-categories?q=" .. urlEncode(query or "")
-        return httpRequest("GET", joinUrl(state.config.apiBaseUrl, path), nil, function(response, err)
-            if err ~= nil then
-                emit("categories.failed", { query = query or "", error = err })
-                return
-            end
-            emit("categories.completed", {
-                query = query or "",
-                values = parseApiStringCollection(response.body),
-            })
-        end)
-    end
-    local json, err = httpGet(joinUrl(state.config.apiBaseUrl, "/api/song-categories?q=" .. urlEncode(query or "")))
-    if err then return nil, err end
-    return parseApiStringCollection(json, { "name", "Name", "category", "Category" })
+    local path = "/api/song-categories?q=" .. urlEncode(query or "")
+    return apiRequest("GET", path, nil, function(response, err)
+        if err ~= nil then
+            emit("categories.failed", { query = query or "", error = err })
+            return nil, err
+        end
+        local values = parseApiStringCollection(response.body, { "name", "Name", "category", "Category" })
+        emit("categories.completed", { query = query or "", values = values })
+        return values
+    end)
 end
 
 function Api.searchMappers(query)
-    if usesVaRest() then
-        if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-        local path = "/api/mapper?q=" .. urlEncode(query or "")
-        return httpRequest("GET", joinUrl(state.config.apiBaseUrl, path), nil, function(response, err)
-            if err ~= nil then
-                emit("mappers.failed", { query = query or "", error = err })
-                return
-            end
-            emit("mappers.completed", {
-                query = query or "",
-                values = parseApiStringCollection(response.body),
-            })
-        end)
-    end
-    local json, err = httpGet(joinUrl(state.config.apiBaseUrl, "/api/mapper?q=" .. urlEncode(query or "")))
-    if err then return nil, err end
-    return parseApiStringCollection(json, { "name", "Name", "mapper", "Mapper" })
+    local path = "/api/mapper?q=" .. urlEncode(query or "")
+    return apiRequest("GET", path, nil, function(response, err)
+        if err ~= nil then
+            emit("mappers.failed", { query = query or "", error = err })
+            return nil, err
+        end
+        local values = parseApiStringCollection(response.body, { "name", "Name", "mapper", "Mapper" })
+        emit("mappers.completed", { query = query or "", values = values })
+        return values
+    end)
 end
 
 function Api.getSongVote(songOrId)
     local id = type(songOrId) == "table" and songOrId.id or songOrId
     if id == nil or trim(id) == "" then return setError("missing song id") end
-    if usesVaRest() then
-        if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-        return httpRequest("GET", joinUrl(state.config.apiBaseUrl, "/api/song/" .. urlEncode(id) .. "/vote"), nil, function(response, err)
-            emit(err and "vote.details.failed" or "vote.details.completed", { id = id, response = response, error = err })
-        end)
-    end
-    return httpGet(joinUrl(state.config.apiBaseUrl, "/api/song/" .. urlEncode(id) .. "/vote"))
+    return apiRequest("GET", "/api/song/" .. urlEncode(id) .. "/vote", nil, function(response, err)
+        emit(err and "vote.details.failed" or "vote.details.completed", { id = id, response = response, error = err })
+        if err ~= nil then
+            return nil, err
+        end
+        return response.body
+    end)
 end
 
 function Api.reviewSong(songOrId, review)
@@ -1582,15 +1550,15 @@ function Api.reviewSong(songOrId, review)
             table.insert(encoded, jsonEscape(field) .. ":" .. (type(value) == "number" and tostring(value) or jsonEscape(value)))
         end
     end
-    local path = joinUrl(state.config.apiBaseUrl, "/api/song/" .. urlEncode(id) .. "/review")
+    local path = "/api/song/" .. urlEncode(id) .. "/review"
     local body = "{" .. table.concat(encoded, ",") .. "}"
-    if usesVaRest() then
-        if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-        return httpRequest("POST", path, body, function(response, err)
-            emit(err and "review.failed" or "review.completed", { id = id, response = response, error = err })
-        end)
-    end
-    return httpPost(path, body)
+    return apiRequest("POST", path, body, function(response, err)
+        emit(err and "review.failed" or "review.completed", { id = id, response = response, error = err })
+        if err ~= nil then
+            return nil, err
+        end
+        return response.body
+    end)
 end
 
 function Api.search(query, options)
@@ -1600,29 +1568,28 @@ function Api.search(query, options)
         query = query or "",
         page = page,
     })
-    if usesVaRest() then
-        if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-        if not state.config.preferApi or options.html then
-            return setError("VaRest transport requires preferApi=true and API search")
-        end
+    if usesVaRest() and (not state.config.preferApi or options.html) then
+        return setError("VaRest transport requires preferApi=true and API search")
+    end
+
+    if state.config.preferApi and not options.html then
         return fetchApiSongs("/api/search/" .. urlEncode(query or ""), function(songs, err)
+            if err ~= nil and not usesVaRest() then
+                songs, err = fetchLibraryPage(query or "", page)
+            end
             if err ~= nil then
                 emit("search.failed", { query = query or "", page = page, error = err })
                 if type(options._onResult) == "function" then options._onResult(nil, err) end
-                return
+                return nil, err
             end
             rememberSongs(songs)
             emit("search.completed", { query = query or "", page = page, songs = songs })
             if type(options._onResult) == "function" then options._onResult(songs, nil) end
+            return songs
         end)
     end
-    local songs, err = nil, nil
-    if state.config.preferApi and not options.html then
-        songs, err = fetchApiSongs("/api/search/" .. urlEncode(query or ""))
-    end
-    if songs == nil then
-        songs, err = fetchLibraryPage(query or "", page)
-    end
+
+    local songs, err = fetchLibraryPage(query or "", page)
     if err then
         emit("search.failed", {
             query = query or "",
@@ -1904,22 +1871,15 @@ function Api.compareInstalledWithUpdates(options)
     end
     local updates = options.updates
     if updates == nil then
-        if usesVaRest() then
-            if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-            return Api.checkUpdates({ callback = function(remote, updateErr)
-                if updateErr ~= nil then
-                    emit("installed.compare.failed", { error = updateErr })
-                    return
-                end
-                local result = Api.compareInstalledWithUpdates({ updates = remote, songFolder = options.songFolder })
-                emit("installed.compare.completed", result)
-            end })
-        end
-        local updateErr = nil
-        updates, updateErr = Api.checkUpdates()
-        if updateErr then
-            return nil, updateErr
-        end
+        return Api.checkUpdates({ callback = function(remote, updateErr)
+            if updateErr ~= nil then
+                emit("installed.compare.failed", { error = updateErr })
+                return nil, updateErr
+            end
+            local result = Api.compareInstalledWithUpdates({ updates = remote, songFolder = options.songFolder })
+            emit("installed.compare.completed", result)
+            return result
+        end })
     end
 
     local missing = {}
@@ -1975,11 +1935,41 @@ function Api.getSong(songOrId, options)
     if url == nil and seed.slug ~= nil then
         url = joinUrl(state.config.baseUrl, "/song/" .. seed.slug)
     end
-    if usesVaRest() then
-        if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-        if not state.config.preferApi or options.html or seed.id == nil then
-            return setError("VaRest transport requires API song details")
+
+    local function loadHtmlDetail()
+        if url == nil then
+            return setError("song detail URL is unavailable for id " .. tostring(seed.id))
         end
+        emit("song.started", {
+            song = seed,
+            url = url,
+        })
+        local html, err = httpGet(url)
+        if err then
+            emit("song.failed", {
+                song = seed,
+                url = url,
+                error = err,
+            })
+            return nil, err
+        end
+        local detail = parseSongDetail(html, seed)
+        if detail.id ~= nil then
+            state.cache.byId[tostring(detail.id)] = detail
+        end
+        if detail.slug ~= nil then
+            state.cache.bySlug[tostring(detail.slug)] = detail
+        end
+        emit("song.completed", {
+            song = detail,
+        })
+        return detail
+    end
+
+    if usesVaRest() and (not state.config.preferApi or options.html or seed.id == nil) then
+        return setError("VaRest transport requires API song details")
+    end
+    if state.config.preferApi and not options.html and seed.id ~= nil then
         local detailPath = options.details and "/api/song/details/" or "/api/song/"
         emit("song.started", {
             song = seed,
@@ -1988,61 +1978,22 @@ function Api.getSong(songOrId, options)
         return fetchApiSongs(detailPath .. tostring(seed.id), function(apiSongs, apiErr)
             if apiErr ~= nil or apiSongs == nil or apiSongs[1] == nil then
                 local err = apiErr or { code = "invalid_response", message = "song detail response was empty" }
+                if not usesVaRest() then
+                    state.lastError = err
+                    return loadHtmlDetail()
+                end
                 emit("song.failed", { song = seed, error = err })
                 if type(options._onResult) == "function" then options._onResult(nil, err) end
-                return
+                return nil, err
             end
             local detail = mergeSong(seed, apiSongs[1])
             state.cache.byId[tostring(detail.id)] = detail
             emit("song.completed", { song = detail })
             if type(options._onResult) == "function" then options._onResult(detail, nil) end
+            return detail
         end)
     end
-    if state.config.preferApi and not options.html and seed.id ~= nil then
-        local detailPath = options.details and "/api/song/details/" or "/api/song/"
-        emit("song.started", {
-            song = seed,
-            url = joinUrl(state.config.apiBaseUrl, detailPath .. tostring(seed.id)),
-        })
-        local apiSongs, apiErr = fetchApiSongs(detailPath .. tostring(seed.id))
-        if apiSongs ~= nil and apiSongs[1] ~= nil then
-            local detail = mergeSong(seed, apiSongs[1])
-            state.cache.byId[tostring(detail.id)] = detail
-            emit("song.completed", {
-                song = detail,
-            })
-            return detail
-        elseif apiErr ~= nil then
-            state.lastError = apiErr
-        end
-    end
-    if url == nil then
-        return setError("song detail URL is unavailable for id " .. tostring(seed.id))
-    end
-    emit("song.started", {
-        song = seed,
-        url = url,
-    })
-    local html, err = httpGet(url)
-    if err then
-        emit("song.failed", {
-            song = seed,
-            url = url,
-            error = err,
-        })
-        return nil, err
-    end
-    local detail = parseSongDetail(html, seed)
-    if detail.id ~= nil then
-        state.cache.byId[tostring(detail.id)] = detail
-    end
-    if detail.slug ~= nil then
-        state.cache.bySlug[tostring(detail.slug)] = detail
-    end
-    emit("song.completed", {
-        song = detail,
-    })
-    return detail
+    return loadHtmlDetail()
 end
 
 function Api.openOneClick(songOrId)
@@ -2190,23 +2141,14 @@ function Api.vote(songOrId, direction, options)
     end
     local path = cleanDirection == "up" and "/api/song/" .. urlEncode(id) .. "/vote/up" or "/api/song/" .. urlEncode(id) .. "/vote/down"
     emit("vote.started", { id = id, direction = cleanDirection })
-    if usesVaRest() then
-        if not vaRestAvailable() then return setError("VaRest transport is selected but unavailable") end
-        return httpRequest("POST", joinUrl(state.config.apiBaseUrl, path), "", function(response, err)
-            if err ~= nil then
-                emit("vote.failed", { id = id, direction = cleanDirection, error = err })
-                return
-            end
-            emit("vote.completed", { id = id, direction = cleanDirection, response = response })
-        end)
-    end
-    local response, err = httpPost(joinUrl(state.config.apiBaseUrl, path), "")
-    if err then
-        emit("vote.failed", { id = id, direction = cleanDirection, error = err })
-        return nil, err
-    end
-    emit("vote.completed", { id = id, direction = cleanDirection, response = response })
-    return response
+    return apiRequest("POST", path, "", function(response, err)
+        if err ~= nil then
+            emit("vote.failed", { id = id, direction = cleanDirection, error = err })
+            return nil, err
+        end
+        emit("vote.completed", { id = id, direction = cleanDirection, response = response })
+        return response.body
+    end)
 end
 
 function Api.upvote(songOrId, options)

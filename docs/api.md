@@ -154,7 +154,7 @@ Use this before rendering install/search/vote controls. The result describes cur
 
 ## Runtime Paths
 
-`main.lua` calls `setRuntimePaths` automatically when UE4SS loads the mod. Consumers normally only need the read helpers:
+`main.lua` calls `setRuntimePaths` automatically when UE4SS loads the mod. Under Proton, the inferred folder is Steam’s `compatdata/1345820/pfx/drive_c/users/steamuser/Documents/Ragnarock/CustomSongs` user-data directory rather than the game install directory. Consumers normally only need the read helpers:
 
 ```lua
 local paths = RagnaCustoms.getRuntimePaths()

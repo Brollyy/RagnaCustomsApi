@@ -2,6 +2,8 @@ local Api = {
     VERSION = "0.3.0",
 }
 
+local RAGNAROCK_APP_ID = "1345820"
+
 local state = {
     config = {
         baseUrl = "https://ragnacustoms.com",
@@ -181,6 +183,20 @@ local function joinPath(left, right)
         return l
     end
     return l .. "/" .. r
+end
+
+local function defaultSongFolder(gameDir)
+    local normalized = tostring(gameDir or ""):gsub("\\", "/"):gsub("/+$", "")
+    local steamRoot = normalized:match("^(.*)/steamapps/common/Ragnarock")
+    local lower = string.lower(normalized)
+    local protonPath = normalized:match("^[Zz]:/") ~= nil
+        or lower:find("/.steam/", 1, true) ~= nil
+        or lower:find("/compatdata/", 1, true) ~= nil
+    if steamRoot ~= nil and protonPath then
+        return joinPath(steamRoot, "steamapps/compatdata/" .. RAGNAROCK_APP_ID
+            .. "/pfx/drive_c/users/steamuser/Documents/Ragnarock/CustomSongs")
+    end
+    return joinPath(normalized, "CustomSongs")
 end
 
 local function parentPath(path)
@@ -1188,7 +1204,7 @@ function Api.setRuntimePaths(paths)
     end
 
     if (state.config.songFolder == nil or state.config.songFolder == "") and state.config.gameDir ~= nil then
-        state.config.songFolder = joinPath(state.config.gameDir, "CustomSongs")
+        state.config.songFolder = defaultSongFolder(state.config.gameDir)
     end
 
     emit("runtime.paths", Api.getRuntimePaths())
@@ -1210,7 +1226,7 @@ function Api.resolveSongFolder()
         return state.config.songFolder
     end
     if state.config.gameDir ~= nil and state.config.gameDir ~= "" then
-        return joinPath(state.config.gameDir, "CustomSongs")
+        return defaultSongFolder(state.config.gameDir)
     end
     return nil
 end

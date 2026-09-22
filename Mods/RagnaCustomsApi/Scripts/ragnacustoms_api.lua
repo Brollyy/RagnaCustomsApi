@@ -1708,15 +1708,38 @@ function Api.searchMappers(query)
     end)
 end
 
+local function parseVoteState(body)
+    local upvotes = jsonNumberAny(body, { "upvotes", "Upvotes" })
+    local downvotes = jsonNumberAny(body, { "downvotes", "Downvotes" })
+    if upvotes == nil or downvotes == nil then
+        return nil, { code = "invalid_response", message = "vote response is missing counts" }
+    end
+    local currentVote = jsonStringAny(body, { "currentVote", "CurrentVote" })
+    if currentVote ~= nil and currentVote ~= "up" and currentVote ~= "down" then
+        return nil, { code = "invalid_response", message = "vote response contains an invalid selection" }
+    end
+    return {
+        currentVote = currentVote,
+        upvotes = upvotes,
+        downvotes = downvotes,
+    }, nil
+end
+
 function Api.getSongVote(songOrId)
     local id = type(songOrId) == "table" and songOrId.id or songOrId
     if id == nil or trim(id) == "" then return setError("missing song id") end
     return apiRequest("GET", "/api/song/" .. urlEncode(id) .. "/vote", nil, function(response, err)
-        emit(err and "vote.details.failed" or "vote.details.completed", { id = id, response = response, error = err })
         if err ~= nil then
+            emit("vote.details.failed", { id = id, error = err })
             return nil, err
         end
-        return response.body
+        local state, parseError = parseVoteState(response.body)
+        if parseError ~= nil then
+            emit("vote.details.failed", { id = id, error = parseError })
+            return nil, parseError
+        end
+        emit("vote.details.completed", { id = id, response = state })
+        return state
     end)
 end
 
@@ -2497,8 +2520,13 @@ function Api.vote(songOrId, direction, options)
             emit("vote.failed", { id = id, direction = cleanDirection, error = err })
             return nil, err
         end
-        emit("vote.completed", { id = id, direction = cleanDirection, response = response })
-        return response.body
+        local state, parseError = parseVoteState(response.body)
+        if parseError ~= nil then
+            emit("vote.failed", { id = id, direction = cleanDirection, error = parseError })
+            return nil, parseError
+        end
+        emit("vote.completed", { id = id, direction = cleanDirection, response = state })
+        return state
     end)
 end
 

@@ -187,6 +187,11 @@
       "signature": "writeInstalledSongId(songFolder, songId)"
     },
     {
+      "name": "discoverInstalledSongId",
+      "category": "installed",
+      "signature": "discoverInstalledSongId(songFolder, metadata, options)"
+    },
+    {
       "name": "isInstalled",
       "category": "installed",
       "signature": "isInstalled(songOrId, options)"

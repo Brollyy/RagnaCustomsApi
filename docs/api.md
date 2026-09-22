@@ -100,6 +100,9 @@ download.completed
 download.failed
 installed.scan.completed
 installed.scan.failed
+installed.id.written
+installed.id.discovered
+installed.id.discovery.failed
 installed.compare.completed
 installed.compare.failed
 vote.started
@@ -344,6 +347,8 @@ Installed entry shape:
 ```
 
 `compareInstalledWithUpdates({ updates = songs })` compares local entries against provided remote rows, or calls `checkUpdates()` when `updates` is omitted. The result has `installed`, `remote`, `missing`, `changed`, and `unchanged` arrays.
+
+discoverInstalledSongId(songFolder, metadata, options) searches the catalog using the loaded song metadata, requires exactly one matching song, and validates options.existingId inside the API. It writes a missing or incorrect ID to that folder's .id and returns the resolved ID plus a result status of validated, replaced, or resolved. Use it when the marker is missing or fails metadata validation.
 
 ## Voting
 

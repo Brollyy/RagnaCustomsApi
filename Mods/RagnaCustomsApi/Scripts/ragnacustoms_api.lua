@@ -2073,6 +2073,139 @@ function Api.writeInstalledSongId(songFolder, songId)
     return math.floor(id), nil, path
 end
 
+local function normalizedCatalogText(value)
+    return trim(tostring(value or "")):lower():gsub("[%p%c]", " "):gsub("%s+", " ")
+end
+
+local function catalogValueMatches(value, candidates)
+    local needle = normalizedCatalogText(value)
+    if needle == "" then return true end
+    for _, candidate in ipairs(candidates or {}) do
+        local normalized = normalizedCatalogText(candidate)
+        if normalized ~= "" and (needle == normalized
+            or normalized:find(needle, 1, true)
+            or needle:find(normalized, 1, true)) then
+            return true
+        end
+    end
+    return false
+end
+
+local function catalogSongMatchesMetadata(song, metadata)
+    if type(song) ~= "table" or type(metadata) ~= "table" then return false end
+    if metadata.title == nil or not catalogValueMatches(metadata.title, { song.title, song.name }) then
+        return false
+    end
+    local artists = song.artists or splitCsv(song.author)
+    if metadata.artist ~= nil and metadata.artist ~= "" and not catalogValueMatches(metadata.artist, artists) then
+        return false
+    end
+    if metadata.mapper ~= nil and metadata.mapper ~= ""
+        and normalizedCatalogText(metadata.mapper) ~= normalizedCatalogText(song.mapper) then
+        return false
+    end
+    local requiredDifficulties = metadata.difficulties or {}
+    if #requiredDifficulties > 0 then
+        local available = song.difficulties or {}
+        for _, required in ipairs(requiredDifficulties) do
+            local found = false
+            for _, candidate in ipairs(available) do
+                if tonumber(required) ~= nil and tonumber(candidate) == tonumber(required) then
+                    found = true
+                    break
+                end
+            end
+            if not found then return false end
+        end
+    end
+    return true
+end
+
+function Api.discoverInstalledSongId(songFolder, metadata, options)
+    options = options or {}
+    if songFolder == nil or trim(songFolder) == "" then
+        return setError("songFolder is required")
+    end
+    if type(metadata) ~= "table" or trim(metadata.title) == "" then
+        return setError("song metadata with title is required")
+    end
+
+    local query = tostring(metadata.artist or "") .. " " .. tostring(metadata.title or "")
+    local completed = false
+    local function finish(id, err, result)
+        if completed then return end
+        completed = true
+        if type(options.callback) == "function" then
+            return options.callback(id, err, result)
+        end
+        return id, err, result
+    end
+    local function handleResults(songs, err)
+        if err ~= nil then
+            emit("installed.id.discovery.failed", { songFolder = songFolder, metadata = metadata, error = err })
+            return finish(nil, err)
+        end
+        local matches = {}
+        for _, song in ipairs(songs or {}) do
+            if catalogSongMatchesMetadata(song, metadata) then
+                table.insert(matches, song)
+            end
+        end
+        if #matches ~= 1 then
+            local discoveryError = {
+                code = "song_id_unresolved",
+                message = "catalog search did not uniquely resolve the loaded song",
+                matches = #matches,
+            }
+            emit("installed.id.discovery.failed", {
+                songFolder = songFolder,
+                metadata = metadata,
+                error = discoveryError,
+            })
+            return finish(nil, discoveryError)
+        end
+        local song = matches[1]
+        local id = tonumber(song.id)
+        local existingId = tonumber(options.existingId)
+        local status = existingId ~= nil and existingId == id and "validated"
+            or existingId ~= nil and "replaced"
+            or "resolved"
+        local writePath = joinPath(songFolder, ".id")
+        if status ~= "validated" then
+            local written, writeError
+            written, writeError, writePath = Api.writeInstalledSongId(songFolder, id)
+            if written == nil then
+                local discoveryError = { code = "marker_write_failed", message = writeError, path = writePath }
+                emit("installed.id.discovery.failed", {
+                    songFolder = songFolder,
+                    metadata = metadata,
+                    error = discoveryError,
+                })
+                return finish(nil, discoveryError)
+            end
+        end
+        local result = {
+            id = id,
+            previousId = existingId,
+            path = writePath,
+            song = song,
+            metadata = metadata,
+            status = status,
+        }
+        emit("installed.id.discovered", result)
+        return finish(id, nil, result)
+    end
+
+    local request = Api.search(query, {
+        page = options.page or 1,
+        _onResult = handleResults,
+    })
+    if type(request) == "table" and not completed then
+        handleResults(request, nil)
+    end
+    return request
+end
+
 function Api.isInstalled(songOrId, options)
     local song, err = Api.getInstalledSong(songOrId, options)
     if err then

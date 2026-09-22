@@ -109,7 +109,7 @@ C:\Users\...\Documents\Ragnarock\CustomSongs
 ...\Steam\steamapps\common\Ragnarock\Ragnarock\CustomSongs
 ```
 
-Set `songFolder` to the `CustomSongs` directory when using zip downloads. When loaded from UE4SS, the library infers the Steam-install path from `.../Ragnarock/Binaries/Win64/Mods/RagnaCustomsApi/Scripts/main.lua`; under Proton it resolves to Steam’s `compatdata/1345820/pfx/drive_c/users/steamuser/Documents/Ragnarock/CustomSongs` user-data directory, while non-Proton paths retain the local `CustomSongs` fallback. `installSong` uses the RagnaCustoms one-click URL by default. `downloadSong` creates one subfolder per song id, downloads from `https://api.ragnacustoms.com/songs/download/<id>` with `X-API-Key` when configured, and extracts it there.
+Set `songFolder` to the `CustomSongs` directory when using zip downloads or installed-song scans. The API does not infer that directory from the executable path; runtime integrations should obtain the exact folder from the loaded Song or BeatMap object. `installSong` uses the RagnaCustoms one-click URL by default. `downloadSong` creates one subfolder per song id, downloads from `https://api.ragnacustoms.com/songs/download/<id>` with `X-API-Key` when configured, and extracts it there.
 
 Use `scanInstalledSongs()` to inspect the resolved `CustomSongs` folder. Downloads made through this library write `.id` and `.hash` marker files into each song folder, and the scanner also recognizes existing folders that contain `info.dat` or use a numeric folder name. `getInstalledSong(songOrId)`, `isInstalled(songOrId)`, and `compareInstalledWithUpdates()` expose that local state for consumer UIs.
 

@@ -1,26 +1,15 @@
 from __future__ import annotations
 
 from pathlib import Path
-import re
 
 
 ROOT = Path(__file__).resolve().parents[1]
 LIB = ROOT / "Mods" / "RagnaCustomsApi" / "Scripts" / "ragnacustoms_api.lua"
 
 
-def default_song_folder(game_dir: str) -> str:
-    normalized = game_dir.replace("\\", "/").rstrip("/")
-    match = re.match(r"^(.*)/steamapps/common/Ragnarock", normalized)
-    lower = normalized.lower()
-    proton_path = normalized.lower().startswith("z:/") or "/.steam/" in lower or "/compatdata/" in lower
-    if match and proton_path:
-        return f"{match.group(1)}/steamapps/compatdata/1345820/pfx/drive_c/users/steamuser/Documents/Ragnarock/CustomSongs"
-    return f"{normalized}/CustomSongs"
-
-
 def capabilities(config: dict) -> dict:
     transport = config.get("transport", "varest")
-    song_folder = config.get("songFolder") or (default_song_folder(config["gameDir"]) if config.get("gameDir") else None)
+    song_folder = config.get("songFolder")
     has_song_folder = bool(song_folder)
     has_shell = config.get("allowShell") is True
     has_http_get = callable(config.get("httpGet")) or has_shell
@@ -64,19 +53,16 @@ def main() -> int:
     )
     assert default["transport"] == "varest"
     assert default["canAsyncFetch"] is True
-    assert default["songFolder"] == "/Game/Ragnarock/CustomSongs"
+    assert default["songFolder"] is None
     assert default["canFetch"] is True
     assert default["canSearch"] is True
     assert default["canPreload"] is True
     assert default["canReturnOneClick"] is True
     assert default["canOpenOneClick"] is False
-    assert default["canDownloadZip"] is True
-    assert default["canExtractZip"] is True
-    assert default["canScanInstalled"] is True
+    assert default["canDownloadZip"] is False
+    assert default["canExtractZip"] is False
+    assert default["canScanInstalled"] is False
     assert default["canVote"] is True
-
-    proton = capabilities({"gameDir": "Z:/home/test/.steam/debian-installation/steamapps/common/Ragnarock"})
-    assert proton["songFolder"] == "Z:/home/test/.steam/debian-installation/steamapps/compatdata/1345820/pfx/drive_c/users/steamuser/Documents/Ragnarock/CustomSongs"
 
     hooked = capabilities(
         {
@@ -136,9 +122,6 @@ def main() -> int:
         'transport = "varest"',
         "canAsyncFetch",
         "function vaRestAvailable()",
-        "local function defaultSongFolder(gameDir)",
-        "compatdata/",
-        'RAGNAROCK_APP_ID = "1345820"',
     ]:
         assert expected in source, f"missing capability source marker: {expected}"
 

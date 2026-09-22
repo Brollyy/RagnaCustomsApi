@@ -107,6 +107,21 @@
       "signature": "getTopRated(results, days)"
     },
     {
+      "name": "getAccount",
+      "category": "account",
+      "signature": "getAccount(options)"
+    },
+    {
+      "name": "searchPlaylists",
+      "category": "playlist",
+      "signature": "searchPlaylists(query, page, pageSize, options)"
+    },
+    {
+      "name": "getPlaylist",
+      "category": "playlist",
+      "signature": "getPlaylist(playlistId, options)"
+    },
+    {
       "name": "searchCategories",
       "category": "catalog",
       "signature": "searchCategories(query)"

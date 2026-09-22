@@ -81,6 +81,12 @@ updates.completed
 updates.failed
 songlist.completed
 songlist.failed
+account.completed
+account.failed
+playlists.completed
+playlists.failed
+playlist.completed
+playlist.failed
 search.started
 search.completed
 search.failed
@@ -154,7 +160,7 @@ Use this before rendering install/search/vote controls. The result describes cur
 
 ## Runtime Paths
 
-`main.lua` calls `setRuntimePaths` automatically when UE4SS loads the mod. Under Proton, the inferred folder is Steam’s `compatdata/1345820/pfx/drive_c/users/steamuser/Documents/Ragnarock/CustomSongs` user-data directory rather than the game install directory. Consumers normally only need the read helpers:
+`main.lua` calls `setRuntimePaths` automatically when UE4SS loads the mod. The executable path is not enough to identify the user’s custom-song directory, especially under Proton, so the API does not guess one. Configure `songFolder` explicitly for catalog-wide installed-song operations. For a loaded custom song, use the folder/path exposed by the live Song or BeatMap object and pass that exact folder to the read helpers:
 
 ```lua
 local paths = RagnaCustoms.getRuntimePaths()
@@ -210,7 +216,12 @@ local uploaded = RagnaCustoms.getLastUploaded(10)
 local rated = RagnaCustoms.getTopRated(10, 30)
 local categories = RagnaCustoms.searchCategories("metal")
 local mappers = RagnaCustoms.searchMappers("alice")
+local account = RagnaCustoms.getAccount()
+local playlists = RagnaCustoms.searchPlaylists("metal", 1, 20)
+local playlist = RagnaCustoms.getPlaylist(42)
 ```
+
+getAccount() uses GET /api/account/me and requires an API key. searchPlaylists() uses GET /api/playlist/search with q, page, and pageSize parameters; getPlaylist() uses GET /api/playlist/<id>. Both playlist methods require a Premium API key. These methods return the API response body and publish their corresponding completion/failure events.
 
 ## Search
 

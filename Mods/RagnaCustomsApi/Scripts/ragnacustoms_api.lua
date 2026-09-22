@@ -2,8 +2,6 @@ local Api = {
     VERSION = "0.3.0",
 }
 
-local RAGNAROCK_APP_ID = "1345820"
-
 local state = {
     config = {
         baseUrl = "https://ragnacustoms.com",
@@ -61,24 +59,6 @@ local state = {
     },
     lastError = nil,
 }
-
--- The authoritative local test runner supplies these only for disposable
--- fixture runs. Normal installations keep the documented production defaults.
-local function environmentValue(name)
-    if os == nil or type(os.getenv) ~= "function" then return nil end
-    local value = os.getenv(name)
-    return value ~= nil and value ~= "" and value or nil
-end
-
-local testApiBaseUrl = environmentValue("RAGNA_TEST_API_BASE_URL")
-local testApiKey = environmentValue("RAGNA_TEST_API_KEY")
-local testSongFolder = environmentValue("RAGNA_TEST_SONG_FOLDER")
-if testApiBaseUrl ~= nil then state.config.apiBaseUrl = testApiBaseUrl end
-if testApiKey ~= nil then state.config.apiKey = testApiKey end
-if testSongFolder ~= nil then
-    state.config.songFolder = testSongFolder
-    state.config.loadedSongFolder = testSongFolder
-end
 
 local function setError(message)
     state.lastError = tostring(message)
@@ -203,59 +183,12 @@ local function joinPath(left, right)
     return l .. "/" .. r
 end
 
-local defaultSongFolder
-
 local function hostPath(path)
     local normalized = tostring(path or ""):gsub("\\", "/")
     if normalized:sub(1, 3):lower() == "z:/" then
         return normalized:sub(3)
     end
-    if state.config.loadedSongFolder ~= nil and state.config.loadedSongFolder ~= "" then
-        local loaded = tostring(state.config.loadedSongFolder):gsub("\\", "/"):gsub("/+$", "")
-        local lowerLoaded = loaded:lower()
-        if normalized:sub(1, #loaded):lower() == lowerLoaded then
-            return normalized
-        end
-        local markerSuffix = normalized:lower():match("/customsongs/(.*)$")
-        local loadedName = loaded:match("/([^/]+)$")
-        if markerSuffix ~= nil and loadedName ~= nil then
-            local prefix = loadedName:lower() .. "/"
-            if markerSuffix:sub(1, #prefix) == prefix then
-                markerSuffix = markerSuffix:sub(#prefix + 1)
-            end
-            return joinPath(loaded, markerSuffix)
-        end
-    end
-    local lower = normalized:lower()
-    local marker = lower:find("/users/steamuser/documents/ragnarock/customsongs", 1, true)
-    local configuredSongFolder = state.config.songFolder
-    if configuredSongFolder == nil or configuredSongFolder == "" then
-        local runtimeRoot = state.config.gameDir or state.config.win64Dir or state.config.scriptPath
-        if runtimeRoot ~= nil then configuredSongFolder = defaultSongFolder(runtimeRoot) end
-    end
-    if marker ~= nil and configuredSongFolder ~= nil and configuredSongFolder ~= "" then
-        local suffix = normalized:sub(marker + #"/users/steamuser/documents/ragnarock/customsongs")
-        local configuredRoot = tostring(configuredSongFolder):gsub("\\", "/")
-        if configuredRoot:sub(1, 3):lower() == "z:/" then
-            configuredRoot = configuredRoot:sub(3)
-        end
-        return joinPath(configuredRoot, suffix)
-    end
     return normalized
-end
-
-defaultSongFolder = function(gameDir)
-    local normalized = tostring(gameDir or ""):gsub("\\", "/"):gsub("/+$", "")
-    local steamRoot = normalized:match("^(.*)/steamapps/common/Ragnarock")
-    local lower = string.lower(normalized)
-    local protonPath = normalized:match("^[Zz]:/") ~= nil
-        or lower:find("/.steam/", 1, true) ~= nil
-        or lower:find("/compatdata/", 1, true) ~= nil
-    if steamRoot ~= nil and protonPath then
-        return joinPath(steamRoot, "steamapps/compatdata/" .. RAGNAROCK_APP_ID
-            .. "/pfx/drive_c/users/steamuser/Documents/Ragnarock/CustomSongs")
-    end
-    return joinPath(normalized, "CustomSongs")
 end
 
 local function parentPath(path)
@@ -927,24 +860,10 @@ local function defaultHttpRequest(method, url, body, callback)
             local responseCode = safeObjectCall(function()
                 return tonumber(unwrapRemoteValue(request:GetResponseCode()))
             end, 0)
-            -- Some UE4SS/VaRest builds do not expose the completion delegate
-            -- and do not transition the reflected request status reliably.
-            -- A positive HTTP response code is still definitive completion.
             if responseCode > 0 then
                 local content = completedResponseBody(request)
                 finish({ status = responseCode, body = content }, nil)
                 return
-            end
-            -- On some Proton/UE4SS VaRest builds the HTTP transaction has
-            -- completed on the native side while the reflected status remains
-            -- pending. After a short grace period, inspect the completed
-            -- response object once and accept it if it contains a body.
-            if attempts >= 4 then
-                local content = completedResponseBody(request)
-                if content ~= nil and content ~= "" then
-                    finish({ status = 200, body = content }, nil)
-                    return
-                end
             end
             if status == 2 then
                 finish(nil, { code = "transport_error", message = "HTTP request failed" })
@@ -1390,10 +1309,6 @@ function Api.setRuntimePaths(paths)
         end
     end
 
-    if (state.config.songFolder == nil or state.config.songFolder == "") and state.config.gameDir ~= nil then
-        state.config.songFolder = defaultSongFolder(state.config.gameDir)
-    end
-
     emit("runtime.paths", Api.getRuntimePaths())
     return Api.getRuntimePaths()
 end
@@ -1411,19 +1326,6 @@ end
 function Api.resolveSongFolder()
     if state.config.songFolder ~= nil and state.config.songFolder ~= "" then
         return state.config.songFolder
-    end
-    if state.config.gameDir ~= nil and state.config.gameDir ~= "" then
-        return defaultSongFolder(state.config.gameDir)
-    end
-    -- UE4SS can expose the API object to a dependent mod before the runtime
-    -- path table has been copied across. The loaded script directory is still
-    -- authoritative, so derive the game root from win64Dir as a fallback.
-    if state.config.win64Dir ~= nil and state.config.win64Dir ~= "" then
-        local win64 = tostring(state.config.win64Dir):gsub("\\", "/"):gsub("/+$", "")
-        local derivedGameDir = win64:match("^(.*)/Ragnarock/Binaries/Win64$")
-        if derivedGameDir ~= nil then
-            return defaultSongFolder(derivedGameDir)
-        end
     end
     return nil
 end
@@ -1696,6 +1598,72 @@ function Api.getTopRated(results, days, options)
     end)
 end
 
+function Api.getAccount(options)
+    options = options or {}
+    return apiRequest("GET", "/api/account/me", nil, function(response, err)
+        emit(err and "account.failed" or "account.completed", {
+            response = response,
+            error = err,
+        })
+        if err ~= nil then
+            if type(options.callback) == "function" then options.callback(nil, err) end
+            return nil, err
+        end
+        if type(options.callback) == "function" then options.callback(response.body, nil) end
+        return response.body
+    end)
+end
+
+function Api.searchPlaylists(query, page, pageSize, options)
+    options = options or {}
+    if type(page) == "table" then
+        options = page
+        page = nil
+        pageSize = nil
+    elseif type(pageSize) == "table" then
+        options = pageSize
+        pageSize = nil
+    end
+    local path = "/api/playlist/search?q=" .. urlEncode(query or "")
+        .. "&page=" .. urlEncode(page or 1)
+        .. "&pageSize=" .. urlEncode(pageSize or 20)
+    return apiRequest("GET", path, nil, function(response, err)
+        emit(err and "playlists.failed" or "playlists.completed", {
+            query = query or "",
+            page = page or 1,
+            pageSize = pageSize or 20,
+            response = response,
+            error = err,
+        })
+        if err ~= nil then
+            if type(options.callback) == "function" then options.callback(nil, err) end
+            return nil, err
+        end
+        if type(options.callback) == "function" then options.callback(response.body, nil) end
+        return response.body
+    end)
+end
+
+function Api.getPlaylist(playlistId, options)
+    options = options or {}
+    if playlistId == nil or trim(playlistId) == "" then
+        return setError("playlist id is required")
+    end
+    return apiRequest("GET", "/api/playlist/" .. urlEncode(playlistId), nil, function(response, err)
+        emit(err and "playlist.failed" or "playlist.completed", {
+            id = playlistId,
+            response = response,
+            error = err,
+        })
+        if err ~= nil then
+            if type(options.callback) == "function" then options.callback(nil, err) end
+            return nil, err
+        end
+        if type(options.callback) == "function" then options.callback(response.body, nil) end
+        return response.body
+    end)
+end
+
 local function parseApiStringCollection(json, keys)
     local values, seen = {}, {}
     for objectText in tostring(json or ""):gmatch("{[^{}]-}") do
@@ -1818,21 +1786,6 @@ function Api.search(query, options)
         songs = songs,
     })
     return songs
-end
-
-function Api.searchByHash(hash, options)
-    options = options or {}
-    local cleanHash = trim(hash)
-    if cleanHash == "" then
-        return setError("hash is required")
-    end
-    return fetchApiSongs("/api/hash/" .. urlEncode(cleanHash), function(songs, err)
-        local song = songs and songs[1] or nil
-        if type(options._onResult) == "function" then
-            options._onResult(song, err)
-        end
-        return song, err
-    end)
 end
 
 function Api.searchCached(query)
@@ -2431,19 +2384,5 @@ Api._internals = {
     stripTags = stripTags,
     archivePathIsSafe = archivePathIsSafe,
 }
-
--- A dependent mod may load this library directly before the API wrapper has
--- published its runtime paths. Recover the same paths from this file's own
--- UE4SS location so catalog/installed-song operations remain usable.
-if type(Api.getRuntimePaths) == "function" and type(Api.setRuntimePaths) == "function"
-    and debug and type(debug.getinfo) == "function" then
-    local source = debug.getinfo(1, "S").source
-    if type(source) == "string" and source:sub(1, 1) == "@" then
-        local scriptPath = source:sub(2):gsub("\\", "/")
-        local win64Dir = scriptPath:match("^(.*)/[Mm]ods/RagnaCustomsApi/[Ss]cripts/ragnacustoms_api%.lua$")
-        local gameDir = win64Dir and win64Dir:match("^(.*)/Ragnarock/Binaries/Win64$") or nil
-        Api.setRuntimePaths({ scriptPath = scriptPath, win64Dir = win64Dir, gameDir = gameDir })
-    end
-end
 
 return Api

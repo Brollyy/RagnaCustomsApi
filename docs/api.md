@@ -224,7 +224,11 @@ local playlists = RagnaCustoms.searchPlaylists("metal", 1, 20)
 local playlist = RagnaCustoms.getPlaylist(42)
 ```
 
-getAccount() uses GET /api/account/me and requires an API key. searchPlaylists() uses GET /api/playlist/search with q, page, and pageSize parameters; getPlaylist() uses GET /api/playlist/<id>. Both playlist methods require a Premium API key. These methods return the API response body and publish their corresponding completion/failure events.
+getAccount() uses GET /api/account/me and requires an API key. It returns `{ username, isPremium, premiumUntil }`.
+
+searchPlaylists() uses GET /api/playlist/search with q, page, and pageSize parameters; getPlaylist() uses GET /api/playlist/<id>. Both playlist methods require a Premium API key. `searchPlaylists()` returns `{ page, pageSize, total, results }`, where each result has `{ id, name, description, owner, songCount, isPublic }`. `getPlaylist()` returns the same playlist fields plus `songs`, containing normalized song rows. These methods publish their corresponding completion/failure events.
+
+`getSongVote()`, `vote()`, and `reviewSong()` return the normalized vote result `{ id, currentVote, upvotes, downvotes, rating, review }`; `rating` and `review` are omitted when the server does not provide them. Consumers should use these fields instead of parsing the response body.
 
 ## Search
 

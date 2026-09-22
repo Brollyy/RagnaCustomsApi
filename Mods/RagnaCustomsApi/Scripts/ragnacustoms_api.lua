@@ -1092,6 +1092,75 @@ local function parseApiSongs(json)
     return songs
 end
 
+local function parseAccount(body)
+    local account = {
+        username = jsonStringAny(body, { "username", "Username" }),
+        isPremium = jsonBooleanAny(body, { "isPremium", "IsPremium", "is_premium" }),
+        premiumUntil = jsonStringAny(body, { "premiumUntil", "PremiumUntil", "premium_until" }),
+    }
+    if account.username == nil and account.isPremium == nil and account.premiumUntil == nil then
+        return nil, { code = "invalid_response", message = "account response has no recognized fields" }
+    end
+    return account, nil
+end
+
+local function parsePlaylistSummary(objectText)
+    local id = jsonNumberAny(objectText, { "id", "Id" })
+    local name = jsonStringAny(objectText, { "name", "Name" })
+    if id == nil or name == nil then
+        return nil
+    end
+    return {
+        id = id,
+        name = name,
+        description = jsonStringAny(objectText, { "description", "Description" }),
+        owner = jsonStringAny(objectText, { "owner", "Owner" }),
+        songCount = jsonNumberAny(objectText, { "songCount", "SongCount", "song_count" }),
+        isPublic = jsonBooleanAny(objectText, { "isPublic", "IsPublic", "is_public" }),
+    }
+end
+
+local function parsePlaylistSearch(body)
+    local result = {
+        page = jsonNumberAny(body, { "page", "Page" }),
+        pageSize = jsonNumberAny(body, { "pageSize", "PageSize", "page_size" }),
+        total = jsonNumberAny(body, { "total", "Total" }),
+        results = {},
+    }
+    for objectText in tostring(body or ""):gmatch("{[^{}]-}") do
+        local playlist = parsePlaylistSummary(objectText)
+        if playlist ~= nil then
+            table.insert(result.results, playlist)
+        end
+    end
+    if result.page == nil and result.pageSize == nil and result.total == nil and #result.results == 0 then
+        return nil, { code = "invalid_response", message = "playlist search response has no recognized fields" }
+    end
+    return result, nil
+end
+
+local function parsePlaylistDetail(body)
+    local playlist = parsePlaylistSummary(body) or {
+        id = jsonNumberAny(body, { "id", "Id" }),
+        name = jsonStringAny(body, { "name", "Name" }),
+        description = jsonStringAny(body, { "description", "Description" }),
+        owner = jsonStringAny(body, { "owner", "Owner" }),
+        songCount = jsonNumberAny(body, { "songCount", "SongCount", "song_count" }),
+        isPublic = jsonBooleanAny(body, { "isPublic", "IsPublic", "is_public" }),
+    }
+    playlist.songs = {}
+    for objectText in tostring(body or ""):gmatch("{[^{}]-}") do
+        local song = parseApiSongObject(objectText)
+        if song ~= nil then
+            table.insert(playlist.songs, song)
+        end
+    end
+    if playlist.id == nil and playlist.name == nil then
+        return nil, { code = "invalid_response", message = "playlist response has no recognized fields" }
+    end
+    return playlist, nil
+end
+
 local function fetchApiSongs(path, callback)
     return apiRequest("GET", path, nil, function(response, err)
         if err ~= nil then
@@ -1601,16 +1670,19 @@ end
 function Api.getAccount(options)
     options = options or {}
     return apiRequest("GET", "/api/account/me", nil, function(response, err)
-        emit(err and "account.failed" or "account.completed", {
-            response = response,
-            error = err,
-        })
         if err ~= nil then
             if type(options.callback) == "function" then options.callback(nil, err) end
             return nil, err
         end
-        if type(options.callback) == "function" then options.callback(response.body, nil) end
-        return response.body
+        local account, parseError = parseAccount(response.body)
+        if parseError ~= nil then
+            emit("account.failed", { error = parseError })
+            if type(options.callback) == "function" then options.callback(nil, parseError) end
+            return nil, parseError
+        end
+        emit("account.completed", { account = account })
+        if type(options.callback) == "function" then options.callback(account, nil) end
+        return account
     end)
 end
 
@@ -1628,19 +1700,19 @@ function Api.searchPlaylists(query, page, pageSize, options)
         .. "&page=" .. urlEncode(page or 1)
         .. "&pageSize=" .. urlEncode(pageSize or 20)
     return apiRequest("GET", path, nil, function(response, err)
-        emit(err and "playlists.failed" or "playlists.completed", {
-            query = query or "",
-            page = page or 1,
-            pageSize = pageSize or 20,
-            response = response,
-            error = err,
-        })
         if err ~= nil then
             if type(options.callback) == "function" then options.callback(nil, err) end
             return nil, err
         end
-        if type(options.callback) == "function" then options.callback(response.body, nil) end
-        return response.body
+        local playlists, parseError = parsePlaylistSearch(response.body)
+        if parseError ~= nil then
+            emit("playlists.failed", { query = query or "", error = parseError })
+            if type(options.callback) == "function" then options.callback(nil, parseError) end
+            return nil, parseError
+        end
+        emit("playlists.completed", { query = query or "", result = playlists })
+        if type(options.callback) == "function" then options.callback(playlists, nil) end
+        return playlists
     end)
 end
 
@@ -1650,17 +1722,19 @@ function Api.getPlaylist(playlistId, options)
         return setError("playlist id is required")
     end
     return apiRequest("GET", "/api/playlist/" .. urlEncode(playlistId), nil, function(response, err)
-        emit(err and "playlist.failed" or "playlist.completed", {
-            id = playlistId,
-            response = response,
-            error = err,
-        })
         if err ~= nil then
             if type(options.callback) == "function" then options.callback(nil, err) end
             return nil, err
         end
-        if type(options.callback) == "function" then options.callback(response.body, nil) end
-        return response.body
+        local playlist, parseError = parsePlaylistDetail(response.body)
+        if parseError ~= nil then
+            emit("playlist.failed", { id = playlistId, error = parseError })
+            if type(options.callback) == "function" then options.callback(nil, parseError) end
+            return nil, parseError
+        end
+        emit("playlist.completed", { id = playlistId, playlist = playlist })
+        if type(options.callback) == "function" then options.callback(playlist, nil) end
+        return playlist
     end)
 end
 
@@ -1718,11 +1792,32 @@ local function parseVoteState(body)
     if currentVote ~= nil and currentVote ~= "up" and currentVote ~= "down" then
         return nil, { code = "invalid_response", message = "vote response contains an invalid selection" }
     end
-    return {
+    local state = {
+        id = jsonNumberAny(body, { "id", "Id" }),
         currentVote = currentVote,
         upvotes = upvotes,
         downvotes = downvotes,
-    }, nil
+    }
+    local rating = tostring(body or ""):match('"rating"%s*:%s*({[^{}]-})')
+    if rating ~= nil then
+        state.rating = {
+            average = jsonNumberAny(rating, { "average", "Average" }),
+            count = jsonNumberAny(rating, { "count", "Count" }),
+        }
+    end
+    if not tostring(body or ""):match('"review"%s*:%s*null') then
+        local review = tostring(body or ""):match('"review"%s*:%s*({[^{}]-})') or tostring(body or "")
+        state.review = {
+            funFactor = jsonNumberAny(review, { "funFactor", "FunFactor" }),
+            rhythm = jsonNumberAny(review, { "rhythm", "Rhythm" }),
+            patternQuality = jsonNumberAny(review, { "patternQuality", "PatternQuality" }),
+            readability = jsonNumberAny(review, { "readability", "Readability" }),
+            flow = jsonNumberAny(review, { "flow", "Flow" }),
+            levelQuality = jsonNumberAny(review, { "levelQuality", "LevelQuality" }),
+            feedback = jsonStringAny(review, { "feedback", "Feedback" }),
+        }
+    end
+    return state, nil
 end
 
 function Api.getSongVote(songOrId)
@@ -1757,11 +1852,17 @@ function Api.reviewSong(songOrId, review)
     local path = "/api/song/" .. urlEncode(id) .. "/review"
     local body = "{" .. table.concat(encoded, ",") .. "}"
     return apiRequest("POST", path, body, function(response, err)
-        emit(err and "review.failed" or "review.completed", { id = id, response = response, error = err })
         if err ~= nil then
+            emit("review.failed", { id = id, error = err })
             return nil, err
         end
-        return response.body
+        local state, parseError = parseVoteState(response.body)
+        if parseError ~= nil then
+            emit("review.failed", { id = id, error = parseError })
+            return nil, parseError
+        end
+        emit("review.completed", { id = id, response = state })
+        return state
     end)
 end
 
@@ -2544,6 +2645,10 @@ Api._internals = {
     urlEncode = urlEncode,
     stripTags = stripTags,
     archivePathIsSafe = archivePathIsSafe,
+    parseAccount = parseAccount,
+    parsePlaylistSearch = parsePlaylistSearch,
+    parsePlaylistDetail = parsePlaylistDetail,
+    parseVoteState = parseVoteState,
 }
 
 return Api

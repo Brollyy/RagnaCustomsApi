@@ -833,6 +833,17 @@ local function completedResponseBody(request)
         if rawText ~= nil and rawText:find('"Results"', 1, true) ~= nil then
             return rawText
         end
+        -- Scalar/nested catalog payloads are complete in the response-content
+        -- accessor. Prefer that text over a reflected object, which can be a
+        -- stale partial object when VaRest completes asynchronously.
+        if rawText ~= nil and (
+            rawText:find('"upvotes"', 1, true) ~= nil
+            or rawText:find('"currentVote"', 1, true) ~= nil
+            or rawText:find('"username"', 1, true) ~= nil
+            or rawText:find('"pageSize"', 1, true) ~= nil
+        ) then
+            return rawText
+        end
         local function jsonFieldFunction(name)
             if type(StaticFindObject) ~= "function" then return nil end
             return safeObjectCall(function()

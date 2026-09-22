@@ -333,8 +333,11 @@ local function decodeJson(text)
     local source, position = tostring(text or ""), 1
 
     local function skipWhitespace()
-        local _, finish = source:find("^%s*", position)
-        position = (finish or position - 1) + 1
+        while position <= #source do
+            local character = source:sub(position, position)
+            if character ~= " " and character ~= "\t" and character ~= "\r" and character ~= "\n" then break end
+            position = position + 1
+        end
     end
 
     local parseValue
@@ -354,7 +357,9 @@ local function decodeJson(text)
                 local replacements = { ['"'] = '"', ["\\"] = "\\", ["/"] = "/", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t" }
                 if escaped == "u" then
                     local hex = source:sub(position, position + 3)
-                    if not hex:match("^%x%x%x%x$") then return nil end
+                    for index = 1, 4 do
+                        if hex:sub(index, index):find("0123456789abcdefABCDEF", 1, true) == nil then return nil end
+                    end
                     table.insert(result, "\\u" .. hex)
                     position = position + 4
                 else
@@ -366,11 +371,33 @@ local function decodeJson(text)
     end
 
     local function parseNumber()
-        local _, finish = source:find("^[%-]?%d+%.?%d*[eE]?[+%-]?%d*", position)
-        if finish == nil or finish < position then return nil end
-        local value = tonumber(source:sub(position, finish))
+        local start = position
+        if source:sub(position, position) == "-" then position = position + 1 end
+        local digits = 0
+        while source:sub(position, position):find("0123456789", 1, true) ~= nil do
+            position = position + 1
+            digits = digits + 1
+        end
+        if source:sub(position, position) == "." then
+            position = position + 1
+            while source:sub(position, position):find("0123456789", 1, true) ~= nil do
+                position = position + 1
+                digits = digits + 1
+            end
+        end
+        if digits == 0 then position = start; return nil end
+        if source:sub(position, position) == "e" or source:sub(position, position) == "E" then
+            position = position + 1
+            if source:sub(position, position) == "+" or source:sub(position, position) == "-" then position = position + 1 end
+            local exponentDigits = 0
+            while source:sub(position, position):find("0123456789", 1, true) ~= nil do
+                position = position + 1
+                exponentDigits = exponentDigits + 1
+            end
+            if exponentDigits == 0 then position = start; return nil end
+        end
+        local value = tonumber(source:sub(start, position - 1))
         if value == nil then return nil end
-        position = finish + 1
         return value
     end
 

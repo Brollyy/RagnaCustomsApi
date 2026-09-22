@@ -129,8 +129,126 @@ local function htmlDecode(value)
     return text
 end
 
-local function stripTags(value)
-    return normalizeSpace(htmlDecode(tostring(value or ""):gsub("<[^>]->", " ")))
+local stripTags
+
+local function htmlParse(source)
+    local root = { tag = "#root", attrs = {}, children = {}, text = "" }
+    local stack = { root }
+    local position = 1
+    local function whitespace(character)
+        return character == " " or character == "\t" or character == "\r" or character == "\n"
+    end
+    local function oneOf(character, values)
+        return values:find(character, 1, true) ~= nil
+    end
+    local function addText(value)
+        if value ~= "" then
+            local node = stack[#stack]
+            node.text = node.text .. value
+        end
+    end
+    local function parseTag(value)
+        local cursor, length = 1, #value
+        while cursor <= length and whitespace(value:sub(cursor, cursor)) do cursor = cursor + 1 end
+        local start = cursor
+        while cursor <= length and not whitespace(value:sub(cursor, cursor)) and value:sub(cursor, cursor) ~= "/" do cursor = cursor + 1 end
+        local name = value:sub(start, cursor - 1):lower()
+        local attrs = {}
+        while cursor <= length do
+            while cursor <= length and (whitespace(value:sub(cursor, cursor)) or value:sub(cursor, cursor) == "/") do cursor = cursor + 1 end
+            if cursor > length then break end
+            local keyStart = cursor
+            while cursor <= length and not whitespace(value:sub(cursor, cursor)) and not oneOf(value:sub(cursor, cursor), "=/>") do cursor = cursor + 1 end
+            local key = value:sub(keyStart, cursor - 1):lower()
+            while cursor <= length and whitespace(value:sub(cursor, cursor)) do cursor = cursor + 1 end
+            local attrValue = ""
+            if value:sub(cursor, cursor) == "=" then
+                cursor = cursor + 1
+                while cursor <= length and whitespace(value:sub(cursor, cursor)) do cursor = cursor + 1 end
+                local quote = value:sub(cursor, cursor)
+                if quote == '"' or quote == "'" then
+                    cursor = cursor + 1
+                    local valueStart = cursor
+                    while cursor <= length and value:sub(cursor, cursor) ~= quote do cursor = cursor + 1 end
+                    attrValue = value:sub(valueStart, cursor - 1)
+                    cursor = cursor + 1
+                else
+                    local valueStart = cursor
+                    while cursor <= length and not whitespace(value:sub(cursor, cursor)) and value:sub(cursor, cursor) ~= ">" do cursor = cursor + 1 end
+                    attrValue = value:sub(valueStart, cursor - 1)
+                end
+            end
+            if key ~= "" then attrs[key] = htmlDecode(attrValue) end
+        end
+        return name, attrs
+    end
+    while position <= #source do
+        local start = source:find("<", position, true)
+        if start == nil then addText(source:sub(position)); break end
+        addText(source:sub(position, start - 1))
+        local finish = source:find(">", start + 1, true)
+        if finish == nil then addText(source:sub(start)); break end
+        local token = source:sub(start + 1, finish - 1)
+        if token:sub(1, 3) == "!--" then
+            position = (source:find("-->", finish + 1, true) or #source - 2) + 3
+        elseif token:sub(1, 1) == "/" then
+            local closing = token:sub(2)
+            local closeStart = 1
+            while closeStart <= #closing and whitespace(closing:sub(closeStart, closeStart)) do closeStart = closeStart + 1 end
+            local closeEnd = closeStart
+            while closeEnd <= #closing and not whitespace(closing:sub(closeEnd, closeEnd)) and closing:sub(closeEnd, closeEnd) ~= ">" do closeEnd = closeEnd + 1 end
+            closing = closing:sub(closeStart, closeEnd - 1)
+            for index = #stack, 2, -1 do
+                if stack[index].tag == string.lower(closing or "") then
+                    for _ = #stack, index, -1 do table.remove(stack) end
+                    break
+                end
+            end
+            position = finish + 1
+        elseif token:sub(1, 1) == "!" or token:sub(1, 1) == "?" then
+            position = finish + 1
+        else
+            local selfClosing = token:sub(-1) == "/"
+            local name, attrs = parseTag(selfClosing and token:sub(1, -2) or token)
+            local node = { tag = name, attrs = attrs, children = {}, text = "", parent = stack[#stack] }
+            table.insert(stack[#stack].children, node)
+            if not selfClosing and name ~= "meta" and name ~= "link" and name ~= "img" and name ~= "br" and name ~= "input" then
+                table.insert(stack, node)
+            end
+            position = finish + 1
+        end
+    end
+    return root
+end
+
+local function htmlText(node)
+    local text = node.text or ""
+    for _, child in ipairs(node.children or {}) do text = text .. htmlText(child) end
+    return stripTags(text)
+end
+
+local function htmlFind(node, tag, className)
+    local result = {}
+    if node.tag == tag and (className == nil or (node.attrs.class or ""):find(className, 1, true) ~= nil) then
+        table.insert(result, node)
+    end
+    for _, child in ipairs(node.children or {}) do
+        for _, match in ipairs(htmlFind(child, tag, className)) do table.insert(result, match) end
+    end
+    return result
+end
+
+stripTags = function(value)
+    local source, text, position = tostring(value or ""), {}, 1
+    local inside = false
+    while position <= #source do
+        local character = source:sub(position, position)
+        if character == "<" then inside = true
+        elseif character == ">" then inside = false
+        elseif not inside then table.insert(text, character) end
+        position = position + 1
+    end
+    return normalizeSpace(htmlDecode(table.concat(text)))
 end
 
 local function shellQuote(value)
@@ -204,71 +322,6 @@ local function urlEncode(value)
     return tostring(value or ""):gsub("\n", "\r\n"):gsub("([^%w%-%_%.%~])", function(char)
         return string.format("%%%02X", string.byte(char))
     end)
-end
-
-local function jsonDecodeString(value)
-    local text = tostring(value or "")
-    text = text:gsub("\\/", "/")
-    text = text:gsub('\\"', '"')
-    text = text:gsub("\\\\", "\\")
-    text = text:gsub("\\n", "\n")
-    text = text:gsub("\\r", "\r")
-    text = text:gsub("\\t", "\t")
-    return text
-end
-
-local function jsonStringField(objectText, name)
-    local value = tostring(objectText or ""):match('"' .. name .. '"%s*:%s*"(.-)"')
-    if value == nil then
-        return nil
-    end
-    return jsonDecodeString(value)
-end
-
-local function jsonNumberField(objectText, name)
-    return tonumber(tostring(objectText or ""):match('"' .. name .. '"%s*:%s*(-?%d+%.?%d*)'))
-end
-
-local function jsonBooleanField(objectText, name)
-    local value = tostring(objectText or ""):match('"' .. name .. '"%s*:%s*(true)')
-        or tostring(objectText or ""):match('"' .. name .. '"%s*:%s*(false)')
-    if value == "true" then
-        return true
-    end
-    if value == "false" then
-        return false
-    end
-    return nil
-end
-
-local function jsonStringAny(objectText, names)
-    for _, name in ipairs(names) do
-        local value = jsonStringField(objectText, name)
-        if value ~= nil then
-            return value
-        end
-    end
-    return nil
-end
-
-local function jsonNumberAny(objectText, names)
-    for _, name in ipairs(names) do
-        local value = jsonNumberField(objectText, name)
-        if value ~= nil then
-            return value
-        end
-    end
-    return nil
-end
-
-local function jsonBooleanAny(objectText, names)
-    for _, name in ipairs(names) do
-        local value = jsonBooleanField(objectText, name)
-        if value ~= nil then
-            return value
-        end
-    end
-    return nil
 end
 
 -- VaRest exposes a JSON object while the shell transport exposes text. Keep
@@ -1063,70 +1116,63 @@ local function apiRequest(method, path, body, callback)
     return complete({ status = 200, body = responseBody }, nil)
 end
 
-local function listFromAnchors(fragment)
-    local result = {}
-    for label in tostring(fragment or ""):gmatch("<a[^>]*>(.-)</a>") do
-        local clean = stripTags(label)
-        if clean ~= "" then
-            table.insert(result, clean)
-        end
-    end
-    if #result == 0 then
-        local clean = stripTags(fragment)
-        if clean ~= "" then
-            table.insert(result, clean)
-        end
-    end
-    return result
-end
-
-local function parseLevels(fragment)
-    local levels = {}
-    for level in tostring(fragment or ""):gmatch("<div class=['\"]level[^>]-.-<span>(%d+)</span>") do
-        table.insert(levels, tonumber(level))
-    end
-    if #levels > 0 then
-        return levels
-    end
-    for level in tostring(fragment or ""):gmatch("<span>(%d+)</span>") do
-        table.insert(levels, tonumber(level))
-    end
-    return levels
-end
-
-local function parseVotes(fragment)
-    local up, down = tostring(fragment or ""):match("</i>%s*(%d+)%s*<i[^>]-fa%-arrow%-down[^>]->%s*</i>%s*(%d+)")
-    return tonumber(up) or 0, tonumber(down) or 0
-end
-
-local function extractFirst(fragment, pattern)
-    return tostring(fragment or ""):match(pattern)
-end
-
 local function parseSongRow(row)
-    local id = tonumber(row:match("ragnac://install/(%d+)") or row:match("/songs/ddl/(%d+)") or row:match("data%-song%-id=['\"](%d+)['\"]"))
+    local function trailingNumber(value)
+        local source = tostring(value or "")
+        local digits = ""
+        for index = #source, 1, -1 do
+            local character = source:sub(index, index)
+            if character < "0" or character > "9" then break end
+            digits = character .. digits
+        end
+        return tonumber(digits)
+    end
+    local idSource
+    local function visit(node)
+        local value = node.attrs["data-song-id"] or node.attrs.href
+        if value ~= nil and idSource == nil then idSource = value end
+        for _, child in ipairs(node.children or {}) do visit(child) end
+    end
+    visit(row)
+    local id = trailingNumber(idSource)
     if id == nil then
         return nil
     end
 
-    local titleBlock = extractFirst(row, '<div class="title">(.-)</div>') or row
-    local slug, titleHtml = titleBlock:match('href="https://ragnacustoms%.com/song/([^"]+)">(.-)</a>')
-    if slug == nil then
-        slug, titleHtml = titleBlock:match('href="/song/([^"]+)">(.-)</a>')
+    local title, slug, author, mapper, cover
+    local difficulties, upvotes, downvotes, bpm = {}, 0, 0, nil
+    local function inspect(node)
+        local className = node.attrs.class or ""
+        if node.tag == "div" and className:find("title", 1, true) ~= nil then
+            title = htmlText(node)
+            for _, anchor in ipairs(htmlFind(node, "a")) do
+                local href = anchor.attrs.href or ""
+                local slash = href:find("/song/", 1, true)
+                if slash ~= nil then
+                    slug = href:sub(slash + 6)
+                    local query = slug:find("?", 1, true) or slug:find("#", 1, true)
+                    if query ~= nil then slug = slug:sub(1, query - 1) end
+                end
+            end
+        elseif node.tag == "div" and className:find("author", 1, true) ~= nil then
+            author = htmlText(node)
+        elseif node.tag == "div" and className:find("mapper", 1, true) ~= nil then
+            mapper = htmlText(node)
+        elseif node.tag == "img" and node.attrs.src ~= nil then
+            cover = node.attrs.src
+        elseif node.tag == "div" and className:find("level-list", 1, true) ~= nil then
+            for _, span in ipairs(htmlFind(node, "span")) do table.insert(difficulties, tonumber(htmlText(span))) end
+        elseif node.tag == "div" and className:find("up_down_vote", 1, true) ~= nil then
+            local numbers = {}
+            for _, child in ipairs(htmlFind(node, "i")) do
+                local text = htmlText(child)
+                if text ~= "" then table.insert(numbers, tonumber(text)) end
+            end
+            upvotes, downvotes = numbers[1] or 0, numbers[2] or 0
+        end
+        for _, child in ipairs(node.children or {}) do inspect(child) end
     end
-
-    local authorBlock = extractFirst(row, '<div class="author">(.-)</div>') or ""
-    local mapperBlock = extractFirst(row, '<div class="mapper">(.-)</div>') or ""
-    local levelBlock = extractFirst(row, '<div class="level%-list">(.-)</td>') or row
-    local voteBlock = extractFirst(row, '<div class="up_down_vote".-</div>') or ""
-    local upvotes, downvotes = parseVotes(voteBlock)
-    local cover = row:match('src="([^"]-/covers/%d+%.webp[^"]*)"') or row:match('src="(/covers/%d+%.webp[^"]*)"')
-
-    local bpm = nil
-    local afterLevels = row:match('<div class="level%-list">.-</div>%s*</td>%s*<td>%s*(%d+)%s*</td>')
-    if afterLevels then
-        bpm = tonumber(afterLevels)
-    end
+    inspect(row)
 
     local installText = "Unknown"
     if installed == true then
@@ -1138,10 +1184,10 @@ local function parseSongRow(row)
     return {
         id = id,
         slug = slug,
-        title = stripTags(titleHtml or ""),
-        artists = listFromAnchors(authorBlock),
-        mapper = stripTags(mapperBlock),
-        difficulties = parseLevels(levelBlock),
+        title = title or "",
+        artists = splitCsv(author),
+        mapper = mapper or "",
+        difficulties = difficulties,
         bpm = bpm,
         upvotes = upvotes,
         downvotes = downvotes,
@@ -1155,7 +1201,7 @@ end
 
 local function parseLibrary(html)
     local songs = {}
-    for row in tostring(html or ""):gmatch("<tr>(.-)</tr>") do
+    for _, row in ipairs(htmlFind(htmlParse(html), "tr")) do
         local song = parseSongRow(row)
         if song ~= nil then
             table.insert(songs, song)
@@ -1164,38 +1210,42 @@ local function parseLibrary(html)
     return songs
 end
 
-local function parseApiSongObject(objectText)
-    local id = jsonNumberAny(objectText, { "Id", "id" })
+local function parseApiSongObject(payload)
+    if type(payload) ~= "table" then return nil end
+    local id = payload.Id or payload.id
     if id == nil then
         return nil
     end
 
-    local author = jsonStringAny(objectText, { "Author", "author" })
-    local ragnabeat = jsonStringAny(objectText, { "Ragnabeat", "ragnabeat" })
+    local author = payload.Author or payload.author
+    local ragnabeat = payload.Ragnabeat or payload.ragnabeat
     return {
         id = id,
-        title = jsonStringAny(objectText, { "Name", "name" }) or "",
+        title = payload.Name or payload.name or "",
         artists = splitCsv(author),
         author = author,
-        mapper = jsonStringAny(objectText, { "Mapper", "mapper" }) or "",
-        difficulties = splitDifficulties(jsonStringAny(objectText, { "Difficulties", "difficulties" })),
-        hash = jsonStringAny(objectText, { "Hash", "hash" }),
-        isRanked = jsonBooleanAny(objectText, { "IsRanked", "isRanked", "is_ranked" }),
+        mapper = payload.Mapper or payload.mapper or "",
+        difficulties = splitDifficulties(payload.Difficulties or payload.difficulties),
+        hash = payload.Hash or payload.hash,
+        isRanked = payload.IsRanked,
         ragnabeat = ragnabeat,
         infoDatUrl = ragnabeat and joinUrl(state.config.baseUrl, ragnabeat) or nil,
         oneClickUrl = "ragnac://install/" .. tostring(id),
         zipUrl = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id)),
         apiDetailUrl = joinUrl(state.config.apiBaseUrl, "/api/song/" .. tostring(id)),
         apiDownloadUrl = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id)),
-        coverImageExtension = jsonStringAny(objectText, { "CoverImageExtension", "coverImageExtension", "cover_image_extension" }),
+        coverImageExtension = payload.CoverImageExtension,
         twitchCode = "!rc " .. tostring(id),
     }
 end
 
 local function parseApiSongs(json)
+    local payload = decodeJson(json)
     local songs = {}
-    for objectText in tostring(json or ""):gmatch("{[^{}]-}") do
-        local song = parseApiSongObject(objectText)
+    if type(payload) ~= "table" then return songs end
+    local items = payload.Results or payload
+    for _, item in ipairs(items) do
+        local song = parseApiSongObject(item)
         if song ~= nil then
             table.insert(songs, song)
         end
@@ -1383,52 +1433,73 @@ local function mergeSong(base, detail)
 end
 
 local function parseDuration(text)
-    local minutes, seconds = tostring(text or ""):match("(%d+):(%d+)")
-    if minutes == nil then
-        return nil
-    end
-    return tonumber(minutes) * 60 + tonumber(seconds)
+    local source = tostring(text or "")
+    local separator = source:find(":", 1, true)
+    if separator == nil then return nil end
+    local minutes, seconds = tonumber(source:sub(1, separator - 1)), tonumber(source:sub(separator + 1))
+    return minutes and seconds and minutes * 60 + seconds or nil
 end
 
 local function parseSongDetail(html, seed)
-    local source = tostring(html or "")
-    local id = tonumber(source:match("ragnac://install/(%d+)") or source:match("/songs/ddl/(%d+)") or (seed and seed.id))
+    local document = htmlParse(html)
+    local id = seed and seed.id
     local detail = {
         id = id,
     }
 
-    detail.title = stripTags(source:match("<h1[^>]->(.-)</h1>") or "")
-    local artistBlock = source:match("<h2[^>]->%s*(.-)%s*</h2>") or ""
-    detail.artists = listFromAnchors(artistBlock)
-    detail.mapper = stripTags(source:match('<div class="label">Mapped by</div>%s*<div class="mapper">(.-)</div>') or "")
-    detail.description = stripTags(source:match('<div class="label">Description</div>%s*<div class="description">(.-)</div>') or "")
-    detail.coverUrl = joinUrl(state.config.baseUrl, source:match('src="([^"]-/covers/%d+%.webp[^"]*)"') or source:match('src="(/covers/%d+%.webp[^"]*)"') or "")
+    local function first(tag, className)
+        return htmlFind(document, tag, className)[1]
+    end
+    local titleNode, artistNode = first("h1"), first("h2")
+    detail.title = titleNode and htmlText(titleNode) or ""
+    detail.artists = {}
+    if artistNode then
+        for _, anchor in ipairs(htmlFind(artistNode, "a")) do table.insert(detail.artists, htmlText(anchor)) end
+    end
+    local mapperNode, descriptionNode = first("div", "mapper"), first("div", "description")
+    detail.mapper = mapperNode and htmlText(mapperNode) or ""
+    detail.description = descriptionNode and htmlText(descriptionNode) or ""
+    local imageNode = first("img")
+    detail.coverUrl = joinUrl(state.config.baseUrl, imageNode and (imageNode.attrs.src or "") or "")
     if detail.coverUrl == state.config.baseUrl .. "/" then
         detail.coverUrl = nil
     end
     detail.zipUrl = id and joinUrl(state.config.baseUrl, "/songs/ddl/" .. tostring(id)) or nil
     detail.oneClickUrl = id and ("ragnac://install/" .. tostring(id)) or nil
     detail.twitchCode = id and ("!rc " .. tostring(id)) or nil
-    detail.durationSeconds = parseDuration(source:match('<i class="fas fa%-clock"></i>%s*([%d:]+)'))
-    detail.bpm = tonumber(source:match('<i class="fas fa%-drum"></i>%s*(%d+)'))
-    detail.infoDatUrl = joinUrl(state.config.baseUrl, source:match('data%-file="([^"]+)"') or "")
+    local clockNode, drumNode = first("i", "fa-clock"), first("i", "fa-drum")
+    detail.durationSeconds = parseDuration(clockNode and htmlText(clockNode.parent or clockNode) or "")
+    detail.bpm = tonumber(drumNode and htmlText(drumNode.parent or drumNode) or "")
+    local infoNode = first("a", nil)
+    detail.infoDatUrl = joinUrl(state.config.baseUrl, infoNode and (infoNode.attrs["data-file"] or "") or "")
     if detail.infoDatUrl == state.config.baseUrl .. "/" then
         detail.infoDatUrl = nil
     end
     detail.previewUrl = id and joinUrl(state.config.baseUrl, "/song/partial/preview/" .. tostring(id)) or nil
 
-    local levelBlock = source:match('<div class="level%-list">(.-)</div>') or ""
-    detail.difficulties = parseLevels(levelBlock)
+    local levelBlock = first("div", "level-list")
+    detail.difficulties = {}
+    if levelBlock then
+        for _, span in ipairs(htmlFind(levelBlock, "span")) do table.insert(detail.difficulties, tonumber(htmlText(span))) end
+    end
 
     local genres = {}
-    for genre in source:gmatch('href="https://ragnacustoms%.com/song%-library%?search=genre:[^"]+">(.-)</a>') do
-        table.insert(genres, stripTags(genre))
+    for _, anchor in ipairs(htmlFind(document, "a")) do
+        local href = anchor.attrs.href or ""
+        if href:find("song-library?search=genre:", 1, true) ~= nil then table.insert(genres, htmlText(anchor)) end
     end
     detail.genres = genres
 
-    local upvotes, downvotes = parseVotes(source:match('<div class="up_down_vote".-</div>') or "")
-    detail.upvotes = upvotes
-    detail.downvotes = downvotes
+    local voteNode = first("div", "up_down_vote")
+    detail.upvotes, detail.downvotes = 0, 0
+    if voteNode then
+        local numbers = {}
+        for _, child in ipairs(htmlFind(voteNode, "i")) do
+            local value = tonumber(htmlText(child))
+            if value then table.insert(numbers, value) end
+        end
+        detail.upvotes, detail.downvotes = numbers[1] or 0, numbers[2] or 0
+    end
 
     return mergeSong(seed or {}, detail)
 end
@@ -1868,20 +1939,27 @@ function Api.getPlaylist(playlistId, options)
 end
 
 local function parseApiStringCollection(json, keys)
+    local payload = decodeJson(json)
     local values, seen = {}, {}
-    for objectText in tostring(json or ""):gmatch("{[^{}]-}") do
-        local value = jsonStringAny(objectText, keys)
-        if value ~= nil and value ~= "" and not seen[value] then
+    local function add(value)
+        if type(value) == "string" and value ~= "" and not seen[value] then
             seen[value] = true
             table.insert(values, value)
         end
     end
-    for value in tostring(json or ""):gmatch('"([^"{}]+)"') do
-        if not seen[value] and value ~= "name" and value ~= "Name" and value ~= "mapper" and value ~= "Mapper" then
-            seen[value] = true
-            table.insert(values, value)
+    local function visit(value)
+        if type(value) ~= "table" then
+            add(value)
+            return
+        end
+        for _, key in ipairs(keys) do
+            add(value[key])
+        end
+        for _, child in pairs(value) do
+            if type(child) == "table" then visit(child) end
         end
     end
+    visit(payload)
     return values
 end
 

@@ -309,9 +309,13 @@ local installed = RagnaCustoms.scanInstalledSongs()
 local entry = RagnaCustoms.getInstalledSong(song)
 local ok, entry = RagnaCustoms.isInstalled(song)
 local comparison = RagnaCustoms.compareInstalledWithUpdates()
+local id = RagnaCustoms.readInstalledSongId(loadedSongFolder)
+RagnaCustoms.writeInstalledSongId(loadedSongFolder, id)
 ```
 
 `scanInstalledSongs()` reads the resolved `CustomSongs` folder. It indexes folders with `.id`, `.hash`, or `info.dat`, and also infers the id from numeric folder names. `downloadSong()` writes `.id` and `.hash` metadata when the caller passes a song table with those fields.
+
+`readInstalledSongId(songFolder)` and `writeInstalledSongId(songFolder, songId)` operate on one known loaded-song folder. They do not scan the song catalog; this is intended for runtime integrations that obtain the folder from the game’s loaded Song/BeatMap object.
 
 Installed entry shape:
 

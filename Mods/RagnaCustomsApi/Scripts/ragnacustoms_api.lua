@@ -62,6 +62,24 @@ local state = {
     lastError = nil,
 }
 
+-- The authoritative local test runner supplies these only for disposable
+-- fixture runs. Normal installations keep the documented production defaults.
+local function environmentValue(name)
+    if os == nil or type(os.getenv) ~= "function" then return nil end
+    local value = os.getenv(name)
+    return value ~= nil and value ~= "" and value or nil
+end
+
+local testApiBaseUrl = environmentValue("RAGNA_TEST_API_BASE_URL")
+local testApiKey = environmentValue("RAGNA_TEST_API_KEY")
+local testSongFolder = environmentValue("RAGNA_TEST_SONG_FOLDER")
+if testApiBaseUrl ~= nil then state.config.apiBaseUrl = testApiBaseUrl end
+if testApiKey ~= nil then state.config.apiKey = testApiKey end
+if testSongFolder ~= nil then
+    state.config.songFolder = testSongFolder
+    state.config.loadedSongFolder = testSongFolder
+end
+
 local function setError(message)
     state.lastError = tostring(message)
     return nil, state.lastError
@@ -185,7 +203,48 @@ local function joinPath(left, right)
     return l .. "/" .. r
 end
 
-local function defaultSongFolder(gameDir)
+local defaultSongFolder
+
+local function hostPath(path)
+    local normalized = tostring(path or ""):gsub("\\", "/")
+    if normalized:sub(1, 3):lower() == "z:/" then
+        return normalized:sub(3)
+    end
+    if state.config.loadedSongFolder ~= nil and state.config.loadedSongFolder ~= "" then
+        local loaded = tostring(state.config.loadedSongFolder):gsub("\\", "/"):gsub("/+$", "")
+        local lowerLoaded = loaded:lower()
+        if normalized:sub(1, #loaded):lower() == lowerLoaded then
+            return normalized
+        end
+        local markerSuffix = normalized:lower():match("/customsongs/(.*)$")
+        local loadedName = loaded:match("/([^/]+)$")
+        if markerSuffix ~= nil and loadedName ~= nil then
+            local prefix = loadedName:lower() .. "/"
+            if markerSuffix:sub(1, #prefix) == prefix then
+                markerSuffix = markerSuffix:sub(#prefix + 1)
+            end
+            return joinPath(loaded, markerSuffix)
+        end
+    end
+    local lower = normalized:lower()
+    local marker = lower:find("/users/steamuser/documents/ragnarock/customsongs", 1, true)
+    local configuredSongFolder = state.config.songFolder
+    if configuredSongFolder == nil or configuredSongFolder == "" then
+        local runtimeRoot = state.config.gameDir or state.config.win64Dir or state.config.scriptPath
+        if runtimeRoot ~= nil then configuredSongFolder = defaultSongFolder(runtimeRoot) end
+    end
+    if marker ~= nil and configuredSongFolder ~= nil and configuredSongFolder ~= "" then
+        local suffix = normalized:sub(marker + #"/users/steamuser/documents/ragnarock/customsongs")
+        local configuredRoot = tostring(configuredSongFolder):gsub("\\", "/")
+        if configuredRoot:sub(1, 3):lower() == "z:/" then
+            configuredRoot = configuredRoot:sub(3)
+        end
+        return joinPath(configuredRoot, suffix)
+    end
+    return normalized
+end
+
+defaultSongFolder = function(gameDir)
     local normalized = tostring(gameDir or ""):gsub("\\", "/"):gsub("/+$", "")
     local steamRoot = normalized:match("^(.*)/steamapps/common/Ragnarock")
     local lower = string.lower(normalized)
@@ -377,7 +436,7 @@ local function defaultListFiles(root)
     if not shellFallbackAvailable() then
         return setError("POSIX file listing is disabled or unavailable; provide a listFiles hook")
     end
-    local quoted = shellQuote(root)
+    local quoted = shellQuote(hostPath(root))
     local command = string.format("if [ -d %s ]; then find %s -maxdepth 4 -type f; fi", quoted, quoted)
     local output, err = readPipe(command)
     if err then
@@ -401,7 +460,8 @@ local function defaultReadFile(path)
     if io == nil or type(io.open) ~= "function" then
         return setError("io.open is unavailable and no readFile hook was provided")
     end
-    local handle, err = io.open(path, "rb")
+    local resolvedPath = hostPath(path)
+    local handle, err = io.open(resolvedPath, "rb")
     if handle == nil then
         return nil, err
     end
@@ -421,7 +481,8 @@ local function defaultWriteFile(path, content)
     if io == nil or type(io.open) ~= "function" then
         return setError("io.open is unavailable and no writeFile hook was provided")
     end
-    local handle, err = io.open(path, "wb")
+    local resolvedPath = hostPath(path)
+    local handle, err = io.open(resolvedPath, "wb")
     if handle == nil then
         return nil, err
     end
@@ -575,15 +636,35 @@ local function responseString(value)
     if type(value) == "string" then
         return value
     end
+    local valueType = safeObjectCall(function() return tostring(value:type()) end, "")
+    if valueType == "RemoteUnrealParam" or valueType == "LocalUnrealParam" then
+        local inner = safeObjectCall(function() return value:get() end, nil)
+        if inner ~= nil and inner ~= value then
+            return responseString(inner)
+        end
+    end
+    if valueType == "FString" or valueType == "FText" then
+        local rendered = safeObjectCall(function() return value:ToString() end, nil)
+        if rendered ~= nil and not tostring(rendered):find("DEPRECATED", 1, true) then
+            return tostring(rendered)
+        end
+    end
     local stringValue = safeObjectCall(function()
         return value:ToString()
     end, nil)
     if stringValue ~= nil then
+        if type(stringValue) == "string" then return stringValue end
+        local rendered = safeObjectCall(function() return stringValue:ToString() end, nil)
+        if rendered ~= nil then return tostring(rendered) end
         return tostring(stringValue)
     end
     local unwrapped = unwrapRemoteValue(value)
     if type(unwrapped) == "string" then
         return unwrapped
+    end
+    if unwrapped ~= nil and unwrapped ~= value then
+        local rendered = safeObjectCall(function() return unwrapped:ToString() end, nil)
+        if rendered ~= nil then return tostring(rendered) end
     end
     return nil
 end
@@ -596,14 +677,106 @@ local function responseBody(request)
         return request:GetResponseContentAsString(false)
     end, nil)
     local returnedText = responseString(returned)
-    if returnedText ~= nil and returnedText ~= "" then
+    if returnedText ~= nil and returnedText ~= ""
+        and not returnedText:find("DEPRECATED", 1, true) then
         return returnedText
     end
 
     local property = safeObjectCall(function()
         return request.ResponseContent
     end, nil)
-    return responseString(property) or ""
+    local propertyText = responseString(property)
+    if propertyText ~= nil and propertyText ~= "" then return propertyText end
+    return ""
+end
+
+local function completedResponseBody(request)
+    local responseObject = safeObjectCall(function() return request.ResponseJsonObj end, nil)
+    if responseObject == nil then
+        responseObject = safeObjectCall(function() return request:GetPropertyValue("ResponseJsonObj") end, nil)
+    end
+    if type(StaticFindObject) == "function" and type(request.CallFunction) == "function" then
+        local fn = safeObjectCall(function()
+            return StaticFindObject("Function /Script/VaRest.VaRestRequestJSON:GetResponseObject")
+        end, nil)
+        if fn ~= nil then
+            local reflectedObject = safeObjectCall(function() return request:CallFunction(fn) end, nil)
+            if reflectedObject ~= nil then responseObject = reflectedObject end
+        end
+    end
+    if responseObject ~= nil then
+        local rawText = responseBody(request)
+        if rawText ~= nil and rawText:find('"Results"', 1, true) ~= nil then
+            return rawText
+        end
+        local function jsonFieldFunction(name)
+            if type(StaticFindObject) ~= "function" then return nil end
+            return safeObjectCall(function()
+                return StaticFindObject("Function /Script/VaRest.VaRestJsonObject:" .. name)
+            end, nil)
+        end
+        local function jsonField(object, functionName, fieldName, fallback)
+            local fn = jsonFieldFunction(functionName)
+            if fn == nil or object == nil or type(object.CallFunction) ~= "function" then
+                return fallback
+            end
+            local field = safeObjectCall(function()
+                return FName(fieldName, EFindName.FNAME_Find)
+            end, fieldName)
+            return unwrapRemoteValue(safeObjectCall(function()
+                return object:CallFunction(fn, { FieldName = field })
+            end, fallback))
+        end
+        local resultObjects = unwrapRemoteValue(jsonField(responseObject, "GetObjectArrayField", "Results", nil))
+        if resultObjects == nil then
+            resultObjects = unwrapRemoteValue(safeObjectCall(function()
+                return responseObject:GetObjectArrayField("Results")
+            end, nil))
+        end
+        if type(resultObjects) == "table" and #resultObjects > 0 then
+            local encodedItems = {}
+            for _, item in ipairs(resultObjects) do
+                item = unwrapRemoteValue(item)
+                local id = unwrapRemoteValue(jsonField(item, "GetIntegerField", "Id", nil))
+                    or unwrapRemoteValue(jsonField(item, "GetNumberField", "Id", nil))
+                    or unwrapRemoteValue(safeObjectCall(function() return item:GetIntegerField("Id") end, nil))
+                local function stringField(name)
+                    local direct = unwrapRemoteValue(safeObjectCall(function()
+                        return item:GetStringField(name)
+                    end, nil))
+                    local directText = responseString(direct)
+                    if directText ~= nil and directText ~= "" then return directText end
+                    local reflected = unwrapRemoteValue(jsonField(item, "GetStringField", name, nil))
+                    return responseString(reflected) or tostring(reflected or "")
+                end
+                local name = stringField("Name")
+                local author = stringField("Author")
+                local mapper = stringField("Mapper")
+                local difficulties = stringField("Difficulties")
+                if id ~= nil then
+                    table.insert(encodedItems, string.format(
+                        "{\"Id\":%s,\"Name\":\"%s\",\"Author\":\"%s\",\"Mapper\":\"%s\",\"Difficulties\":\"%s\"}",
+                        tostring(id), jsonEscape(name), jsonEscape(author), jsonEscape(mapper), jsonEscape(difficulties)))
+                end
+            end
+            if #encodedItems > 0 then return "[" .. table.concat(encodedItems, ",") .. "]" end
+        end
+        local encoded = nil
+        if type(StaticFindObject) == "function" and type(responseObject.CallFunction) == "function" then
+            local fn = safeObjectCall(function()
+                return StaticFindObject("Function /Script/VaRest.VaRestJsonObject:EncodeJson")
+            end, nil)
+            if fn ~= nil then
+                encoded = safeObjectCall(function() return responseObject:CallFunction(fn) end, nil)
+            end
+        end
+        if encoded == nil then
+            encoded = safeObjectCall(function() return responseObject:EncodeJson() end, nil)
+        end
+        local encodedText = responseString(encoded)
+        if encodedText ~= nil and encodedText ~= "" then return encodedText end
+    end
+    return responseBody(request, true)
 end
 
 local function constructVaRestRequest()
@@ -721,7 +894,10 @@ local function defaultHttpRequest(method, url, body, callback)
     end
 
     local configured, configuredError = pcall(function()
-        request:SetVerb(method == "GET" and 0 or 2)
+        -- VaRest uses 0=GET, 1=POST, 2=PUT. Preserve the caller's method;
+        -- mapping every non-GET request to PUT breaks catalog vote/review POSTs.
+        local verb = method == "GET" and 0 or method == "POST" and 1 or method == "PUT" and 2 or 1
+        request:SetVerb(verb)
         request:SetContentType(2)
         for name, value in pairs(requestHeaders()) do
             request:SetHeader(tostring(name), tostring(value))
@@ -755,16 +931,27 @@ local function defaultHttpRequest(method, url, body, callback)
             -- and do not transition the reflected request status reliably.
             -- A positive HTTP response code is still definitive completion.
             if responseCode > 0 then
-                local content = responseBody(request)
+                local content = completedResponseBody(request)
                 finish({ status = responseCode, body = content }, nil)
                 return
+            end
+            -- On some Proton/UE4SS VaRest builds the HTTP transaction has
+            -- completed on the native side while the reflected status remains
+            -- pending. After a short grace period, inspect the completed
+            -- response object once and accept it if it contains a body.
+            if attempts >= 4 then
+                local content = completedResponseBody(request)
+                if content ~= nil and content ~= "" then
+                    finish({ status = 200, body = content }, nil)
+                    return
+                end
             end
             if status == 2 then
                 finish(nil, { code = "transport_error", message = "HTTP request failed" })
                 return
             end
             if status == 3 then
-                local content = responseBody(request)
+                local content = completedResponseBody(request)
                 if responseCode > 0 then
                     finish({ status = responseCode, body = content }, nil)
                 else
@@ -778,7 +965,7 @@ local function defaultHttpRequest(method, url, body, callback)
             end
             ExecuteWithDelay(500, pollStatus)
         end
-        ExecuteWithDelay(500, pollStatus)
+        pcall(ExecuteWithDelay, 500, pollStatus)
     end
 
     ExecuteWithDelay(30000, function()
@@ -1228,6 +1415,16 @@ function Api.resolveSongFolder()
     if state.config.gameDir ~= nil and state.config.gameDir ~= "" then
         return defaultSongFolder(state.config.gameDir)
     end
+    -- UE4SS can expose the API object to a dependent mod before the runtime
+    -- path table has been copied across. The loaded script directory is still
+    -- authoritative, so derive the game root from win64Dir as a fallback.
+    if state.config.win64Dir ~= nil and state.config.win64Dir ~= "" then
+        local win64 = tostring(state.config.win64Dir):gsub("\\", "/"):gsub("/+$", "")
+        local derivedGameDir = win64:match("^(.*)/Ragnarock/Binaries/Win64$")
+        if derivedGameDir ~= nil then
+            return defaultSongFolder(derivedGameDir)
+        end
+    end
     return nil
 end
 
@@ -1623,6 +1820,21 @@ function Api.search(query, options)
     return songs
 end
 
+function Api.searchByHash(hash, options)
+    options = options or {}
+    local cleanHash = trim(hash)
+    if cleanHash == "" then
+        return setError("hash is required")
+    end
+    return fetchApiSongs("/api/hash/" .. urlEncode(cleanHash), function(songs, err)
+        local song = songs and songs[1] or nil
+        if type(options._onResult) == "function" then
+            options._onResult(song, err)
+        end
+        return song, err
+    end)
+end
+
 function Api.searchCached(query)
     local matches = {}
     for _, song in ipairs(state.cache.songs or {}) do
@@ -1869,6 +2081,43 @@ function Api.getInstalledSong(songOrId, options)
         return state.installed.byHash[string.lower(tostring(songOrId))]
     end
     return nil
+end
+
+-- Read/write the catalog marker for one already-loaded custom-song folder.
+-- This intentionally does not scan CustomSongs: callers that know the loaded
+-- folder can use the marker without touching unrelated installations.
+function Api.readInstalledSongId(songFolder)
+    if songFolder == nil or trim(songFolder) == "" then
+        return nil, "songFolder is required"
+    end
+    local path = joinPath(songFolder, ".id")
+    local value, err = readTextFile(path)
+    if value == nil then
+        return nil, err
+    end
+    local trimmed = trim(value)
+    local id = tonumber(tostring(trimmed):match("^%s*(%d+)%s*$"))
+    if id == nil or id <= 0 then
+        return nil, "invalid catalog id in " .. path
+    end
+    return math.floor(id), nil, path
+end
+
+function Api.writeInstalledSongId(songFolder, songId)
+    local id = tonumber(songId)
+    if songFolder == nil or trim(songFolder) == "" then
+        return nil, "songFolder is required"
+    end
+    if id == nil or id <= 0 then
+        return nil, "songId must be a positive number"
+    end
+    local path = joinPath(songFolder, ".id")
+    local result, err = writeTextFile(path, tostring(math.floor(id)) .. "\n")
+    if result == nil and err ~= nil then
+        return nil, err
+    end
+    emit("installed.id.written", { path = path, id = math.floor(id), songFolder = songFolder })
+    return math.floor(id), nil, path
 end
 
 function Api.isInstalled(songOrId, options)
@@ -2182,5 +2431,19 @@ Api._internals = {
     stripTags = stripTags,
     archivePathIsSafe = archivePathIsSafe,
 }
+
+-- A dependent mod may load this library directly before the API wrapper has
+-- published its runtime paths. Recover the same paths from this file's own
+-- UE4SS location so catalog/installed-song operations remain usable.
+if type(Api.getRuntimePaths) == "function" and type(Api.setRuntimePaths) == "function"
+    and debug and type(debug.getinfo) == "function" then
+    local source = debug.getinfo(1, "S").source
+    if type(source) == "string" and source:sub(1, 1) == "@" then
+        local scriptPath = source:sub(2):gsub("\\", "/")
+        local win64Dir = scriptPath:match("^(.*)/[Mm]ods/RagnaCustomsApi/[Ss]cripts/ragnacustoms_api%.lua$")
+        local gameDir = win64Dir and win64Dir:match("^(.*)/Ragnarock/Binaries/Win64$") or nil
+        Api.setRuntimePaths({ scriptPath = scriptPath, win64Dir = win64Dir, gameDir = gameDir })
+    end
+end
 
 return Api

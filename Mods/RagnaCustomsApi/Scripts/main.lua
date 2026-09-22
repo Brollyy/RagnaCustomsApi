@@ -78,6 +78,15 @@ if type(apiOrError.setRuntimePaths) == "function" then
         gameDir = gameDir,
     })
 end
+if type(apiOrError.configure) == "function" and gameDir ~= nil then
+    local normalizedGameDir = tostring(gameDir):gsub("\\", "/"):gsub("/+$", "")
+    local steamRoot = normalizedGameDir:match("^(.*)/Ragnarock$")
+    if steamRoot ~= nil then
+        apiOrError.configure({
+            songFolder = steamRoot .. "/steamapps/compatdata/1345820/pfx/drive_c/users/steamuser/Documents/Ragnarock/CustomSongs",
+        })
+    end
+end
 
 writeLoadMarker(apiOrError)
 log("loaded " .. tostring(apiOrError.VERSION))

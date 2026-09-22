@@ -162,6 +162,16 @@
       "signature": "getInstalledSong(songOrId, options)"
     },
     {
+      "name": "readInstalledSongId",
+      "category": "installed",
+      "signature": "readInstalledSongId(songFolder)"
+    },
+    {
+      "name": "writeInstalledSongId",
+      "category": "installed",
+      "signature": "writeInstalledSongId(songFolder, songId)"
+    },
+    {
       "name": "isInstalled",
       "category": "installed",
       "signature": "isInstalled(songOrId, options)"

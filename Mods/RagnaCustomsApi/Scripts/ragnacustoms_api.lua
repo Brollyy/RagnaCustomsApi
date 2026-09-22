@@ -271,6 +271,117 @@ local function jsonBooleanAny(objectText, names)
     return nil
 end
 
+-- VaRest exposes a JSON object while the shell transport exposes text. Keep
+-- the public response contract transport-neutral by decoding the latter once
+-- here instead of making each endpoint search the JSON with patterns.
+local JSON_NULL = {}
+
+local function decodeJson(text)
+    local source, position = tostring(text or ""), 1
+
+    local function skipWhitespace()
+        local _, finish = source:find("^%s*", position)
+        position = (finish or position - 1) + 1
+    end
+
+    local parseValue
+    local function parseString()
+        if source:sub(position, position) ~= '"' then return nil end
+        position = position + 1
+        local result = {}
+        while position <= #source do
+            local character = source:sub(position, position)
+            position = position + 1
+            if character == '"' then return table.concat(result) end
+            if character ~= "\\" then
+                table.insert(result, character)
+            else
+                local escaped = source:sub(position, position)
+                position = position + 1
+                local replacements = { ['"'] = '"', ["\\"] = "\\", ["/"] = "/", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t" }
+                if escaped == "u" then
+                    local hex = source:sub(position, position + 3)
+                    if not hex:match("^%x%x%x%x$") then return nil end
+                    table.insert(result, "\\u" .. hex)
+                    position = position + 4
+                else
+                    table.insert(result, replacements[escaped] or escaped)
+                end
+            end
+        end
+        return nil
+    end
+
+    local function parseNumber()
+        local _, finish = source:find("^[%-]?%d+%.?%d*[eE]?[+%-]?%d*", position)
+        if finish == nil or finish < position then return nil end
+        local value = tonumber(source:sub(position, finish))
+        if value == nil then return nil end
+        position = finish + 1
+        return value
+    end
+
+    local function parseArray()
+        position = position + 1
+        local result = {}
+        skipWhitespace()
+        if source:sub(position, position) == "]" then position = position + 1; return result end
+        while position <= #source do
+            local value = parseValue()
+            if value == nil then return nil end
+            table.insert(result, value)
+            skipWhitespace()
+            local separator = source:sub(position, position)
+            position = position + 1
+            if separator == "]" then return result end
+            if separator ~= "," then return nil end
+            skipWhitespace()
+        end
+        return nil
+    end
+
+    local function parseObject()
+        position = position + 1
+        local result = {}
+        skipWhitespace()
+        if source:sub(position, position) == "}" then position = position + 1; return result end
+        while position <= #source do
+            local key = parseString()
+            if key == nil then return nil end
+            skipWhitespace()
+            if source:sub(position, position) ~= ":" then return nil end
+            position = position + 1
+            local value = parseValue()
+            if value == nil then return nil end
+            result[key] = value
+            skipWhitespace()
+            local separator = source:sub(position, position)
+            position = position + 1
+            if separator == "}" then return result end
+            if separator ~= "," then return nil end
+            skipWhitespace()
+        end
+        return nil
+    end
+
+    parseValue = function()
+        skipWhitespace()
+        local character = source:sub(position, position)
+        if character == '"' then return parseString() end
+        if character == "{" then return parseObject() end
+        if character == "[" then return parseArray() end
+        if source:sub(position, position + 3) == "true" then position = position + 4; return true end
+        if source:sub(position, position + 4) == "false" then position = position + 5; return false end
+        if source:sub(position, position + 3) == "null" then position = position + 4; return JSON_NULL end
+        return parseNumber()
+    end
+
+    local value = parseValue()
+    skipWhitespace()
+    if value == nil or position <= #source then return nil end
+    return value
+end
+
 local function jsonEscape(value)
     return tostring(value or "")
         :gsub("\\", "\\\\")
@@ -1093,10 +1204,14 @@ local function parseApiSongs(json)
 end
 
 local function parseAccount(body)
+    local payload = decodeJson(body)
+    if type(payload) ~= "table" then
+        return nil, { code = "invalid_response", message = "account response is not a JSON object" }
+    end
     local account = {
-        username = jsonStringAny(body, { "username", "Username" }),
-        isPremium = jsonBooleanAny(body, { "isPremium", "IsPremium", "is_premium" }),
-        premiumUntil = jsonStringAny(body, { "premiumUntil", "PremiumUntil", "premium_until" }),
+        username = payload.username,
+        isPremium = payload.isPremium,
+        premiumUntil = payload.premiumUntil == JSON_NULL and nil or payload.premiumUntil,
     }
     if account.username == nil and account.isPremium == nil and account.premiumUntil == nil then
         return nil, { code = "invalid_response", message = "account response has no recognized fields" }
@@ -1104,31 +1219,35 @@ local function parseAccount(body)
     return account, nil
 end
 
-local function parsePlaylistSummary(objectText)
-    local id = jsonNumberAny(objectText, { "id", "Id" })
-    local name = jsonStringAny(objectText, { "name", "Name" })
+local function parsePlaylistSummary(payload)
+    if type(payload) ~= "table" then return nil end
+    local id, name = payload.id, payload.name
     if id == nil or name == nil then
         return nil
     end
     return {
         id = id,
         name = name,
-        description = jsonStringAny(objectText, { "description", "Description" }),
-        owner = jsonStringAny(objectText, { "owner", "Owner" }),
-        songCount = jsonNumberAny(objectText, { "songCount", "SongCount", "song_count" }),
-        isPublic = jsonBooleanAny(objectText, { "isPublic", "IsPublic", "is_public" }),
+        description = payload.description == JSON_NULL and nil or payload.description,
+        owner = payload.owner == JSON_NULL and nil or payload.owner,
+        songCount = payload.songCount == JSON_NULL and nil or payload.songCount,
+        isPublic = payload.isPublic == JSON_NULL and nil or payload.isPublic,
     }
 end
 
 local function parsePlaylistSearch(body)
+    local payload = decodeJson(body)
+    if type(payload) ~= "table" then
+        return nil, { code = "invalid_response", message = "playlist search response is not a JSON object" }
+    end
     local result = {
-        page = jsonNumberAny(body, { "page", "Page" }),
-        pageSize = jsonNumberAny(body, { "pageSize", "PageSize", "page_size" }),
-        total = jsonNumberAny(body, { "total", "Total" }),
+        page = payload.page == JSON_NULL and nil or payload.page,
+        pageSize = payload.pageSize == JSON_NULL and nil or payload.pageSize,
+        total = payload.total == JSON_NULL and nil or payload.total,
         results = {},
     }
-    for objectText in tostring(body or ""):gmatch("{[^{}]-}") do
-        local playlist = parsePlaylistSummary(objectText)
+    for _, item in ipairs(payload.results or {}) do
+        local playlist = parsePlaylistSummary(item)
         if playlist ~= nil then
             table.insert(result.results, playlist)
         end
@@ -1140,19 +1259,29 @@ local function parsePlaylistSearch(body)
 end
 
 local function parsePlaylistDetail(body)
-    local playlist = parsePlaylistSummary(body) or {
-        id = jsonNumberAny(body, { "id", "Id" }),
-        name = jsonStringAny(body, { "name", "Name" }),
-        description = jsonStringAny(body, { "description", "Description" }),
-        owner = jsonStringAny(body, { "owner", "Owner" }),
-        songCount = jsonNumberAny(body, { "songCount", "SongCount", "song_count" }),
-        isPublic = jsonBooleanAny(body, { "isPublic", "IsPublic", "is_public" }),
+    local payload = decodeJson(body)
+    if type(payload) ~= "table" then
+        return nil, { code = "invalid_response", message = "playlist response is not a JSON object" }
+    end
+    local playlist = parsePlaylistSummary(payload) or {
+        id = payload.id,
+        name = payload.name,
+        description = payload.description,
+        owner = payload.owner,
+        songCount = payload.songCount,
+        isPublic = payload.isPublic,
     }
     playlist.songs = {}
-    for objectText in tostring(body or ""):gmatch("{[^{}]-}") do
-        local song = parseApiSongObject(objectText)
-        if song ~= nil then
-            table.insert(playlist.songs, song)
+    for _, rawSong in ipairs(payload.songs or {}) do
+        if type(rawSong) == "table" and rawSong.Id ~= nil then
+            table.insert(playlist.songs, {
+                id = rawSong.Id,
+                title = rawSong.Name or "",
+                mapper = rawSong.Mapper or "",
+                hash = rawSong.Hash,
+                isRanked = rawSong.IsRanked,
+                author = rawSong.Author,
+            })
         end
     end
     if playlist.id == nil and playlist.name == nil then
@@ -1783,38 +1912,41 @@ function Api.searchMappers(query)
 end
 
 local function parseVoteState(body)
-    local upvotes = jsonNumberAny(body, { "upvotes", "Upvotes" })
-    local downvotes = jsonNumberAny(body, { "downvotes", "Downvotes" })
+    local payload = decodeJson(body)
+    if type(payload) ~= "table" then
+        return nil, { code = "invalid_response", message = "vote response is not a JSON object" }
+    end
+    local upvotes, downvotes = payload.upvotes, payload.downvotes
     if upvotes == nil or downvotes == nil then
         return nil, { code = "invalid_response", message = "vote response is missing counts" }
     end
-    local currentVote = jsonStringAny(body, { "currentVote", "CurrentVote" })
+    local currentVote = payload.currentVote == JSON_NULL and nil or payload.currentVote
     if currentVote ~= nil and currentVote ~= "up" and currentVote ~= "down" then
         return nil, { code = "invalid_response", message = "vote response contains an invalid selection" }
     end
     local state = {
-        id = jsonNumberAny(body, { "id", "Id" }),
+        id = payload.id == JSON_NULL and nil or payload.id,
         currentVote = currentVote,
         upvotes = upvotes,
         downvotes = downvotes,
     }
-    local rating = tostring(body or ""):match('"rating"%s*:%s*({[^{}]-})')
-    if rating ~= nil then
+    local rating = payload.rating
+    if type(rating) == "table" then
         state.rating = {
-            average = jsonNumberAny(rating, { "average", "Average" }),
-            count = jsonNumberAny(rating, { "count", "Count" }),
+            average = rating.average,
+            count = rating.count,
         }
     end
-    if not tostring(body or ""):match('"review"%s*:%s*null') then
-        local review = tostring(body or ""):match('"review"%s*:%s*({[^{}]-})') or tostring(body or "")
+    if type(payload.review) == "table" then
+        local review = payload.review
         state.review = {
-            funFactor = jsonNumberAny(review, { "funFactor", "FunFactor" }),
-            rhythm = jsonNumberAny(review, { "rhythm", "Rhythm" }),
-            patternQuality = jsonNumberAny(review, { "patternQuality", "PatternQuality" }),
-            readability = jsonNumberAny(review, { "readability", "Readability" }),
-            flow = jsonNumberAny(review, { "flow", "Flow" }),
-            levelQuality = jsonNumberAny(review, { "levelQuality", "LevelQuality" }),
-            feedback = jsonStringAny(review, { "feedback", "Feedback" }),
+            funFactor = review.funFactor,
+            rhythm = review.rhythm,
+            patternQuality = review.patternQuality,
+            readability = review.readability,
+            flow = review.flow,
+            levelQuality = review.levelQuality,
+            feedback = review.feedback == JSON_NULL and nil or review.feedback,
         }
     end
     return state, nil

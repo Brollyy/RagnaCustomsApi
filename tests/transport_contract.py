@@ -23,6 +23,8 @@ def main() -> int:
     assert "value:ForEach(function(first, second)" in source
     assert 'FindFirstOf("BP_GameInstance_Retail_C")' in source
     assert 'instance:GetPropertyValue("CustomApiURLs")' in source
+    assert '"/Script/VaRest.VaRestRequestJSON:ProcessURL"' in source
+    assert "configured API from in-game VaRest URL" in source
     assert '"RagnarockSettings"' not in source
     assert "payload.Results or payload.results or payload.songs or payload" in source
     assert '"text", "Text", "label", "Label"' in source

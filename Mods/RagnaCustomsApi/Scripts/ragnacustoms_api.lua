@@ -51,6 +51,7 @@ local state = {
     subscribers = {},
     activeRequests = {},
     requestSerial = 0,
+    customApiRequestHookInstalled = false,
     status = {
         ready = false,
         loading = false,
@@ -517,6 +518,59 @@ local function customApiEndpointParts(value)
     local key = endpoint:sub(keyStart, keyEnd - 1)
     if origin == "" or key == "" then return nil end
     return origin, key
+end
+
+local function adoptCustomApiEndpoint(value, options)
+    local origin, key = customApiEndpointParts(value)
+    if origin == nil or key == nil then
+        return nil
+    end
+    local config = {}
+    if options == nil or options.configureBase ~= false then
+        config.baseUrl = origin
+        config.apiBaseUrl = origin
+    end
+    if options == nil or options.configureApiKey ~= false then
+        config.apiKey = key
+    end
+    Api.configure(config)
+    emit("game.custom_api_url", config)
+    return config
+end
+
+local function installCustomApiRequestHook()
+    if state.customApiRequestHookInstalled or type(RegisterHook) ~= "function" then
+        return state.customApiRequestHookInstalled
+    end
+    if _G.__RagnaCustomsApiProcessURLHookInstalled then
+        state.customApiRequestHookInstalled = true
+        return true
+    end
+    local function observeProcessUrl(_, url)
+        local value = unwrapRemoteValue(url)
+        local text = type(value) == "string" and value or nil
+        if text == nil and value ~= nil then
+            local stringOk, rendered = pcall(function() return value:ToString() end)
+            if stringOk and type(rendered) == "string" then text = rendered end
+        end
+        if text ~= nil then
+            local configured = adoptCustomApiEndpoint(text)
+            if configured ~= nil then
+                print("[RagnaCustomsApi] configured API from in-game VaRest URL base="
+                    .. tostring(configured.apiBaseUrl)
+                    .. " keyConfigured=" .. tostring(configured.apiKey ~= nil and configured.apiKey ~= "")
+                    .. "\n")
+            end
+        end
+    end
+    local ok = pcall(RegisterHook,
+        "/Script/VaRest.VaRestRequestJSON:ProcessURL",
+        observeProcessUrl)
+    if ok then
+        state.customApiRequestHookInstalled = true
+        _G.__RagnaCustomsApiProcessURLHookInstalled = true
+    end
+    return state.customApiRequestHookInstalled
 end
 
 local function splitCsv(value)
@@ -1689,6 +1743,7 @@ end
 -- so merely loading the library never reads or forwards game credentials.
 function Api.configureFromGameCustomApiUrls(options)
     options = options or {}
+    installCustomApiRequestHook()
     local function valuesOf(value)
         if type(value) == "table" then return value end
         local result = {}
@@ -1728,14 +1783,7 @@ function Api.configureFromGameCustomApiUrls(options)
                 for _, value in ipairs(valuesOf(urls)) do
                     local origin, key = customApiEndpointParts(value)
                     if origin ~= nil and key ~= nil then
-                        local config = {}
-                        if options.configureBase ~= false then
-                            config.baseUrl = origin
-                            config.apiBaseUrl = origin
-                        end
-                        if options.configureApiKey ~= false then config.apiKey = key end
-                        Api.configure(config)
-                        return config
+                        return adoptCustomApiEndpoint(value, options)
                     end
                 end
             end
@@ -3036,5 +3084,10 @@ Api._internals = {
     parsePlaylistDetail = parsePlaylistDetail,
     parseVoteState = parseVoteState,
 }
+
+-- Observe the game's own authenticated VaRest URL as soon as the library is
+-- loaded. This runs before consumers begin song/result resolution and does not
+-- inspect any config file or enumerate candidate settings objects.
+installCustomApiRequestHook()
 
 return Api

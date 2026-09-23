@@ -306,6 +306,12 @@ local function hostPath(path)
     if normalized:sub(1, 3):lower() == "z:/" then
         return normalized:sub(3)
     end
+    if normalized:sub(1, 3):lower() == "c:/" and os and os.getenv then
+        local compatData = os.getenv("STEAM_COMPAT_DATA_PATH")
+        if compatData ~= nil and compatData ~= "" then
+            return compatData .. "/pfx/drive_c/" .. normalized:sub(4)
+        end
+    end
     return normalized
 end
 
@@ -330,7 +336,20 @@ end
 local JSON_NULL = {}
 
 local function decodeJson(text)
-    local source, position = tostring(text or ""), 1
+    local source = tostring(text or "")
+    -- VaRest may expose FString storage with a UTF-8 BOM or a terminal NUL.
+    -- Both are transport framing, not JSON content.
+    if source:sub(1, 3) == "\239\187\191" then source = source:sub(4) end
+    source = source:gsub("%z+$", "")
+    local position = 1
+    local function isDigit(character)
+        return character ~= "" and character >= "0" and character <= "9"
+    end
+    local function isHexDigit(character)
+        return isDigit(character)
+            or (character >= "a" and character <= "f")
+            or (character >= "A" and character <= "F")
+    end
 
     local function skipWhitespace()
         while position <= #source do
@@ -358,7 +377,7 @@ local function decodeJson(text)
                 if escaped == "u" then
                     local hex = source:sub(position, position + 3)
                     for index = 1, 4 do
-                        if hex:sub(index, index):find("0123456789abcdefABCDEF", 1, true) == nil then return nil end
+                        if not isHexDigit(hex:sub(index, index)) then return nil end
                     end
                     table.insert(result, "\\u" .. hex)
                     position = position + 4
@@ -374,13 +393,13 @@ local function decodeJson(text)
         local start = position
         if source:sub(position, position) == "-" then position = position + 1 end
         local digits = 0
-        while source:sub(position, position):find("0123456789", 1, true) ~= nil do
+        while isDigit(source:sub(position, position)) do
             position = position + 1
             digits = digits + 1
         end
         if source:sub(position, position) == "." then
             position = position + 1
-            while source:sub(position, position):find("0123456789", 1, true) ~= nil do
+            while isDigit(source:sub(position, position)) do
                 position = position + 1
                 digits = digits + 1
             end
@@ -390,7 +409,7 @@ local function decodeJson(text)
             position = position + 1
             if source:sub(position, position) == "+" or source:sub(position, position) == "-" then position = position + 1 end
             local exponentDigits = 0
-            while source:sub(position, position):find("0123456789", 1, true) ~= nil do
+            while isDigit(source:sub(position, position)) do
                 position = position + 1
                 exponentDigits = exponentDigits + 1
             end
@@ -486,6 +505,24 @@ local function unwrapRemoteValue(value)
         end
     end
     return value
+end
+
+local function customApiEndpointParts(value)
+    local endpoint = tostring(unwrapRemoteValue(value) or "")
+    local schemeEnd = endpoint:find("://", 1, true)
+    if schemeEnd == nil then return nil end
+    local authorityStart = schemeEnd + 3
+    local pathStart = endpoint:find("/", authorityStart, true)
+    if pathStart == nil then return nil end
+    local origin = endpoint:sub(1, pathStart - 1)
+    local marker = "/wanapi/score/"
+    local keyStart = endpoint:find(marker, pathStart, true)
+    if keyStart == nil then return nil end
+    keyStart = keyStart + #marker
+    local keyEnd = endpoint:find("/", keyStart, true) or endpoint:find("?", keyStart, true) or endpoint:find("#", keyStart, true) or (#endpoint + 1)
+    local key = endpoint:sub(keyStart, keyEnd - 1)
+    if origin == "" or key == "" then return nil end
+    return origin, key
 end
 
 local function splitCsv(value)
@@ -1063,21 +1100,23 @@ local function defaultHttpRequest(method, url, body, callback)
                 return tonumber(unwrapRemoteValue(request:GetResponseCode()))
             end, 0)
             if responseCode > 0 then
-                local content = completedResponseBody(request)
-                finish({ status = responseCode, body = content }, nil)
-                return
+                local content = responseBody(request)
+                if content == nil or content == "" then content = completedResponseBody(request) end
+                if content ~= nil and content ~= "" then
+                    finish({ status = responseCode, body = content }, nil)
+                    return
+                end
             end
-            if status == 2 then
-                finish(nil, { code = "transport_error", message = "HTTP request failed" })
-                return
+            if status == 2 or status == 4 then
+                local content = responseBody(request)
+                if content == nil or content == "" then content = completedResponseBody(request) end
+                if content ~= nil and content ~= "" then
+                    finish({ status = responseCode > 0 and responseCode or 200, body = content }, nil)
+                    return
+                end
             end
             if status == 3 then
-                local content = completedResponseBody(request)
-                if responseCode > 0 then
-                    finish({ status = responseCode, body = content }, nil)
-                else
-                    finish(nil, { code = "transport_error", message = "HTTP request failed" })
-                end
+                finish(nil, { code = "transport_error", message = "HTTP request failed" })
                 return
             end
             if attempts >= 60 then
@@ -1620,6 +1659,93 @@ function Api.setRuntimePaths(paths)
     return Api.getRuntimePaths()
 end
 
+-- Explicitly adopt Ragnarock's configured custom API endpoint. This is opt-in
+-- so merely loading the library never reads or forwards game credentials.
+function Api.configureFromGameCustomApiUrls(options)
+    options = options or {}
+    if type(FindFirstOf) ~= "function" then
+        -- Continue to the ini fallback below when UE4SS reflection is absent.
+    end
+    local function valuesOf(value)
+        if type(value) == "table" then return value end
+        local result = {}
+        local forEachOk, forEach = pcall(function() return value.ForEach end)
+        if forEachOk and type(forEach) == "function" then
+            pcall(function() value:ForEach(function(entry) table.insert(result, entry) end) end)
+        end
+        if #result == 0 then
+            local countOk, count = pcall(function() return tonumber(value:Num()) end)
+            if countOk and count ~= nil then
+                for index = 0, count - 1 do
+                    local itemOk, item = pcall(function() return value:Get(index) end)
+                    if itemOk and item ~= nil then table.insert(result, item) end
+                end
+            end
+        end
+        return result
+    end
+    if type(FindFirstOf) == "function" then
+      for _, className in ipairs({
+        "RagnarockSettings", "RagnarockSettings_C", "BP_RagnarockSettings_C",
+        "RagnarockGameUserSettings", "GameUserSettings",
+        "RagnarockGameInstance", "BP_RagnarockGameInstance_C", "BP_GameInstance_Retail_C",
+        "BP_GameInstance_C", "GameInstance",
+    }) do
+        local ok, instance = pcall(function() return FindFirstOf(className) end)
+        if ok and instance ~= nil then
+            local urlsOk, urls = pcall(function()
+                return instance:GetPropertyValue("CustomApiURLs")
+            end)
+            if urlsOk then
+                for _, value in pairs(valuesOf(urls)) do
+                    local origin, key = customApiEndpointParts(value)
+                    if origin ~= nil and key ~= nil then
+                        local config = {}
+                        if options.configureBase ~= false then
+                            config.baseUrl = origin
+                            config.apiBaseUrl = origin
+                        end
+                        if options.configureApiKey ~= false then config.apiKey = key end
+                        Api.configure(config)
+                        return config
+                    end
+                end
+            end
+        end
+      end
+    end
+    local compatData = os and os.getenv and os.getenv("STEAM_COMPAT_DATA_PATH") or nil
+    if compatData ~= nil and io ~= nil and type(io.open) == "function" then
+        local iniPath = compatData .. "/pfx/drive_c/users/steamuser/AppData/Local/Ragnarock/Saved/Config/WindowsNoEditor/Game.ini"
+        local handle = io.open(iniPath, "rb")
+        if handle ~= nil then
+            for line in handle:lines() do
+                local valueStart = tostring(line):find("CustomApiURLs=", 1, true)
+                if valueStart ~= nil then
+                    local value = tostring(line):sub(valueStart + 14)
+                    if value:sub(1, 1) == '"' and value:sub(-1) == '"' then
+                        value = value:sub(2, -2)
+                    end
+                    local origin, key = customApiEndpointParts(value)
+                    if origin ~= nil and key ~= nil then
+                        local config = {}
+                        if options.configureBase ~= false then
+                            config.baseUrl = origin
+                            config.apiBaseUrl = origin
+                        end
+                        if options.configureApiKey ~= false then config.apiKey = key end
+                        Api.configure(config)
+                        handle:close()
+                        return config
+                    end
+                end
+            end
+            handle:close()
+        end
+    end
+    return nil, { code = "custom_api_url_missing", message = "No configured /wanapi/score/{apiKey} endpoint was found" }
+end
+
 function Api.getRuntimePaths()
     return {
         scriptPath = state.config.scriptPath,
@@ -2036,7 +2162,8 @@ local function parseVoteState(body)
     if upvotes == nil or downvotes == nil then
         return nil, { code = "invalid_response", message = "vote response is missing counts" }
     end
-    local currentVote = payload.currentVote == JSON_NULL and nil or payload.currentVote
+    local currentVote = payload.currentVote
+    if currentVote == JSON_NULL then currentVote = nil end
     if currentVote ~= nil and currentVote ~= "up" and currentVote ~= "down" then
         return nil, { code = "invalid_response", message = "vote response contains an invalid selection" }
     end
@@ -2421,7 +2548,16 @@ function Api.readInstalledSongId(songFolder)
         return nil, err
     end
     local trimmed = trim(value)
-    local id = tonumber(tostring(trimmed):match("^%s*(%d+)%s*$"))
+    local digits = tostring(trimmed)
+    local valid = digits ~= ""
+    for index = 1, #digits do
+        local character = digits:sub(index, index)
+        if character < "0" or character > "9" then
+            valid = false
+            break
+        end
+    end
+    local id = valid and tonumber(digits) or nil
     if id == nil or id <= 0 then
         return nil, "invalid catalog id in " .. path
     end

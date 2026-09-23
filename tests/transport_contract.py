@@ -17,6 +17,13 @@ def main() -> int:
     assert "local function apiRequest(method, path, body, callback)" in source
     assert source.count("return httpRequest(method, url, body, complete)") == 1
     assert "return apiRequest(\"POST\", path, \"\", function(response, err)" in source
+    assert "local votes = type(payload.votes) == \"table\" and payload.votes or nil" in source
+    assert "local currentVote = votes ~= nil and votes.mine or payload.currentVote" in source
+    assert "payload.id ~= nil and payload.id or payload.songId" in source
+    assert "payload.Results or payload.results or payload.songs or payload" in source
+    assert '"text", "Text", "label", "Label"' in source
+    assert "payload.fullname" in source
+    assert "payload.levels" in source
     print("transport response-body contract: ok")
     return 0
 

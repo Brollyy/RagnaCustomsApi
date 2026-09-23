@@ -1295,16 +1295,46 @@ local function parseApiSongObject(payload)
     end
 
     local author = payload.Author or payload.author
+    if type(author) == "table" then
+        author = author.fullname or author.name or author.Name
+    end
+    local mapper = payload.Mapper or payload.mapper
+    if type(mapper) == "table" then
+        mapper = mapper.fullname or mapper.name or mapper.Name
+    end
     local ragnabeat = payload.Ragnabeat or payload.ragnabeat
+    local isRanked = payload.IsRanked
+    if isRanked == nil then isRanked = payload.isRanked end
+    local cover = payload.CoverUrl or payload.coverUrl or payload.cover
+    local preview = payload.PreviewUrl or payload.previewUrl
+    local difficulties = splitDifficulties(payload.Difficulties or payload.difficulties)
+    if #difficulties == 0 and type(payload.levels) == "table" then
+        for _, level in ipairs(payload.levels) do
+            if type(level) == "table" and level.rank ~= nil then
+                table.insert(difficulties, tonumber(level.rank) or level.rank)
+            end
+        end
+    end
+    local genres = {}
+    if type(payload.genres) == "table" then
+        for _, genre in ipairs(payload.genres) do
+            if type(genre) == "string" and genre ~= "" then
+                table.insert(genres, genre)
+            elseif type(genre) == "table" then
+                local name = genre.name or genre.text or genre.Name
+                if name ~= nil and tostring(name) ~= "" then table.insert(genres, tostring(name)) end
+            end
+        end
+    end
     return {
         id = id,
-        title = payload.Name or payload.name or "",
+        title = payload.Name or payload.name or payload.fullname or "",
         artists = splitCsv(author),
         author = author,
-        mapper = payload.Mapper or payload.mapper or "",
-        difficulties = splitDifficulties(payload.Difficulties or payload.difficulties),
+        mapper = mapper or "",
+        difficulties = difficulties,
         hash = payload.Hash or payload.hash,
-        isRanked = payload.IsRanked,
+        isRanked = isRanked,
         ragnabeat = ragnabeat,
         infoDatUrl = ragnabeat and joinUrl(state.config.baseUrl, ragnabeat) or nil,
         oneClickUrl = "ragnac://install/" .. tostring(id),
@@ -1312,6 +1342,10 @@ local function parseApiSongObject(payload)
         apiDetailUrl = joinUrl(state.config.apiBaseUrl, "/api/song/" .. tostring(id)),
         apiDownloadUrl = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id)),
         coverImageExtension = payload.CoverImageExtension,
+        coverUrl = cover and joinUrl(state.config.baseUrl, cover) or nil,
+        previewUrl = preview and joinUrl(state.config.baseUrl, preview) or nil,
+        description = payload.description == JSON_NULL and nil or payload.description,
+        genres = genres,
         twitchCode = "!rc " .. tostring(id),
     }
 end
@@ -1320,7 +1354,11 @@ local function parseApiSongs(json)
     local payload = decodeJson(json)
     local songs = {}
     if type(payload) ~= "table" then return songs end
-    local items = payload.Results or payload
+    local items = payload.Results or payload.results or payload.songs or payload
+    if payload.Id ~= nil or payload.id ~= nil then
+        items = { payload }
+    end
+    if type(items) ~= "table" then return songs end
     for _, item in ipairs(items) do
         local song = parseApiSongObject(item)
         if song ~= nil then
@@ -1400,15 +1438,9 @@ local function parsePlaylistDetail(body)
     }
     playlist.songs = {}
     for _, rawSong in ipairs(payload.songs or {}) do
-        if type(rawSong) == "table" and rawSong.Id ~= nil then
-            table.insert(playlist.songs, {
-                id = rawSong.Id,
-                title = rawSong.Name or "",
-                mapper = rawSong.Mapper or "",
-                hash = rawSong.Hash,
-                isRanked = rawSong.IsRanked,
-                author = rawSong.Author,
-            })
+        local song = parseApiSongObject(rawSong)
+        if song ~= nil then
+            table.insert(playlist.songs, song)
         end
     end
     if playlist.id == nil and playlist.name == nil then
@@ -2134,7 +2166,7 @@ function Api.searchCategories(query)
             emit("categories.failed", { query = query or "", error = err })
             return nil, err
         end
-        local values = parseApiStringCollection(response.body, { "name", "Name", "category", "Category" })
+        local values = parseApiStringCollection(response.body, { "name", "Name", "category", "Category", "text", "Text", "label", "Label" })
         emit("categories.completed", { query = query or "", values = values })
         return values
     end)
@@ -2147,7 +2179,7 @@ function Api.searchMappers(query)
             emit("mappers.failed", { query = query or "", error = err })
             return nil, err
         end
-        local values = parseApiStringCollection(response.body, { "name", "Name", "mapper", "Mapper" })
+        local values = parseApiStringCollection(response.body, { "name", "Name", "mapper", "Mapper", "text", "Text", "label", "Label" })
         emit("mappers.completed", { query = query or "", values = values })
         return values
     end)
@@ -2158,17 +2190,22 @@ local function parseVoteState(body)
     if type(payload) ~= "table" then
         return nil, { code = "invalid_response", message = "vote response is not a JSON object" }
     end
-    local upvotes, downvotes = payload.upvotes, payload.downvotes
+    -- The documented catalog vote endpoints return their vote data under
+    -- `votes`: { up, down, mine }. Keep accepting the older flattened shape
+    -- for compatibility with older/self-hosted servers.
+    local votes = type(payload.votes) == "table" and payload.votes or nil
+    local upvotes = votes ~= nil and votes.up or payload.upvotes
+    local downvotes = votes ~= nil and votes.down or payload.downvotes
     if upvotes == nil or downvotes == nil then
         return nil, { code = "invalid_response", message = "vote response is missing counts" }
     end
-    local currentVote = payload.currentVote
+    local currentVote = votes ~= nil and votes.mine or payload.currentVote
     if currentVote == JSON_NULL then currentVote = nil end
     if currentVote ~= nil and currentVote ~= "up" and currentVote ~= "down" then
         return nil, { code = "invalid_response", message = "vote response contains an invalid selection" }
     end
     local state = {
-        id = payload.id == JSON_NULL and nil or payload.id,
+        id = payload.id ~= nil and payload.id or payload.songId,
         currentVote = currentVote,
         upvotes = upvotes,
         downvotes = downvotes,

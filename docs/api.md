@@ -230,6 +230,8 @@ searchPlaylists() uses GET /api/playlist/search with q, page, and pageSize param
 
 `getSongVote()`, `vote()`, and `reviewSong()` return the normalized vote result `{ id, currentVote, upvotes, downvotes, rating, review }`; `rating` and `review` are omitted when the server does not provide them. Consumers should use these fields instead of parsing the response body.
 
+The catalog API's wire response stores these values under `votes`: `up`, `down`, and `mine`. The library maps them to the normalized fields above; `votes.mine` is the caller's initial selection (`"up"`, `"down"`, or `null`).
+
 ## Search
 
 ```lua
@@ -289,6 +291,8 @@ local detail = RagnaCustoms.getSong(song, { refresh = true })
 ```
 
 When `preferApi` is true, numeric IDs use `GET /api/song/<id>` from `apiBaseUrl`, so `getSong(6037)` can fetch details without a prior search. Pass `{ details = true }` to use `GET /api/song/details/<id>`. Public web detail fallback is slug-based, so if `preferApi` is false, call `search` or `preloadSongs` first or pass a song table with `detailUrl`.
+
+The compact catalog responses use `Results` or `results` depending on the endpoint. The library accepts both forms. The detailed song response uses `fullname`, nested `author`/`mapper`, `levels`, `coverUrl`, `previewUrl`, and `genres`; these are normalized into the same song object returned by compact endpoints.
 
 ## Downloads
 

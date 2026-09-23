@@ -306,12 +306,6 @@ local function hostPath(path)
     if normalized:sub(1, 3):lower() == "z:/" then
         return normalized:sub(3)
     end
-    if normalized:sub(1, 3):lower() == "c:/" and os and os.getenv then
-        local compatData = os.getenv("STEAM_COMPAT_DATA_PATH")
-        if compatData ~= nil and compatData ~= "" then
-            return compatData .. "/pfx/drive_c/" .. normalized:sub(4)
-        end
-    end
     return normalized
 end
 
@@ -1746,35 +1740,6 @@ function Api.configureFromGameCustomApiUrls(options)
         end
       end
     end
-    local compatData = os and os.getenv and os.getenv("STEAM_COMPAT_DATA_PATH") or nil
-    if compatData ~= nil and io ~= nil and type(io.open) == "function" then
-        local iniPath = compatData .. "/pfx/drive_c/users/steamuser/AppData/Local/Ragnarock/Saved/Config/WindowsNoEditor/Game.ini"
-        local handle = io.open(iniPath, "rb")
-        if handle ~= nil then
-            for line in handle:lines() do
-                local valueStart = tostring(line):find("CustomApiURLs=", 1, true)
-                if valueStart ~= nil then
-                    local value = tostring(line):sub(valueStart + 14)
-                    if value:sub(1, 1) == '"' and value:sub(-1) == '"' then
-                        value = value:sub(2, -2)
-                    end
-                    local origin, key = customApiEndpointParts(value)
-                    if origin ~= nil and key ~= nil then
-                        local config = {}
-                        if options.configureBase ~= false then
-                            config.baseUrl = origin
-                            config.apiBaseUrl = origin
-                        end
-                        if options.configureApiKey ~= false then config.apiKey = key end
-                        Api.configure(config)
-                        handle:close()
-                        return config
-                    end
-                end
-            end
-            handle:close()
-        end
-    end
     return nil, { code = "custom_api_url_missing", message = "No configured /wanapi/score/{apiKey} endpoint was found" }
 end
 
@@ -2190,22 +2155,21 @@ local function parseVoteState(body)
     if type(payload) ~= "table" then
         return nil, { code = "invalid_response", message = "vote response is not a JSON object" }
     end
-    -- The documented catalog vote endpoints return their vote data under
-    -- `votes`: { up, down, mine }. Keep accepting the older flattened shape
-    -- for compatibility with older/self-hosted servers.
-    local votes = type(payload.votes) == "table" and payload.votes or nil
-    local upvotes = votes ~= nil and votes.up or payload.upvotes
-    local downvotes = votes ~= nil and votes.down or payload.downvotes
+    local votes = payload.votes
+    if type(votes) ~= "table" then
+        return nil, { code = "invalid_response", message = "vote response is missing votes" }
+    end
+    local upvotes, downvotes = votes.up, votes.down
     if upvotes == nil or downvotes == nil then
         return nil, { code = "invalid_response", message = "vote response is missing counts" }
     end
-    local currentVote = votes ~= nil and votes.mine or payload.currentVote
+    local currentVote = votes.mine
     if currentVote == JSON_NULL then currentVote = nil end
     if currentVote ~= nil and currentVote ~= "up" and currentVote ~= "down" then
         return nil, { code = "invalid_response", message = "vote response contains an invalid selection" }
     end
     local state = {
-        id = payload.id ~= nil and payload.id or payload.songId,
+        id = payload.songId,
         currentVote = currentVote,
         upvotes = upvotes,
         downvotes = downvotes,

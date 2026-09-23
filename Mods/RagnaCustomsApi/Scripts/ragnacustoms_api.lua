@@ -1697,7 +1697,15 @@ function Api.configureFromGameCustomApiUrls(options)
         local result = {}
         local forEachOk, forEach = pcall(function() return value.ForEach end)
         if forEachOk and type(forEach) == "function" then
-            pcall(function() value:ForEach(function(entry) table.insert(result, entry) end) end)
+            pcall(function()
+                value:ForEach(function(first, second)
+                    -- UE4SS TArray wrappers call ForEach with (index, element).
+                    -- Accept the one-argument form as well for reflected array
+                    -- wrappers that omit the index.
+                    local entry = second ~= nil and second or first
+                    if entry ~= nil then table.insert(result, entry) end
+                end)
+            end)
         end
         if #result == 0 then
             local countOk, count = pcall(function() return tonumber(value:Num()) end)

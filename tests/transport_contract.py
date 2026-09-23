@@ -20,6 +20,7 @@ def main() -> int:
     assert "local votes = payload.votes" in source
     assert "local currentVote = votes.mine" in source
     assert "id = payload.songId" in source
+    assert "value:ForEach(function(first, second)" in source
     assert "payload.Results or payload.results or payload.songs or payload" in source
     assert '"text", "Text", "label", "Label"' in source
     assert "payload.fullname" in source

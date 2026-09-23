@@ -1689,9 +1689,6 @@ end
 -- so merely loading the library never reads or forwards game credentials.
 function Api.configureFromGameCustomApiUrls(options)
     options = options or {}
-    if type(FindFirstOf) ~= "function" then
-        -- Continue to the ini fallback below when UE4SS reflection is absent.
-    end
     local function valuesOf(value)
         if type(value) == "table" then return value end
         local result = {}
@@ -1719,19 +1716,16 @@ function Api.configureFromGameCustomApiUrls(options)
         return result
     end
     if type(FindFirstOf) == "function" then
-      for _, className in ipairs({
-        "RagnarockSettings", "RagnarockSettings_C", "BP_RagnarockSettings_C",
-        "RagnarockGameUserSettings", "GameUserSettings",
-        "RagnarockGameInstance", "BP_RagnarockGameInstance_C", "BP_GameInstance_Retail_C",
-        "BP_GameInstance_C", "GameInstance",
-    }) do
-        local ok, instance = pcall(function() return FindFirstOf(className) end)
+        -- Ragnarock's live game instance owns the setting. Its runtime object
+        -- path is /Engine/Transient...:BP_GameInstance_Retail_C_...; read the
+        -- one documented property directly from that instance.
+        local ok, instance = pcall(function() return FindFirstOf("BP_GameInstance_Retail_C") end)
         if ok and instance ~= nil then
             local urlsOk, urls = pcall(function()
                 return instance:GetPropertyValue("CustomApiURLs")
             end)
             if urlsOk then
-                for _, value in pairs(valuesOf(urls)) do
+                for _, value in ipairs(valuesOf(urls)) do
                     local origin, key = customApiEndpointParts(value)
                     if origin ~= nil and key ~= nil then
                         local config = {}
@@ -1746,7 +1740,6 @@ function Api.configureFromGameCustomApiUrls(options)
                 end
             end
         end
-      end
     end
     return nil, { code = "custom_api_url_missing", message = "No configured /wanapi/score/{apiKey} endpoint was found" }
 end

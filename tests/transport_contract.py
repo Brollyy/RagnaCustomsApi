@@ -21,6 +21,9 @@ def main() -> int:
     assert "local currentVote = votes.mine" in source
     assert "id = payload.songId" in source
     assert "value:ForEach(function(first, second)" in source
+    assert 'FindFirstOf("BP_GameInstance_Retail_C")' in source
+    assert 'instance:GetPropertyValue("CustomApiURLs")' in source
+    assert '"RagnarockSettings"' not in source
     assert "payload.Results or payload.results or payload.songs or payload" in source
     assert '"text", "Text", "label", "Label"' in source
     assert "payload.fullname" in source

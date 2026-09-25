@@ -51,7 +51,6 @@ local state = {
     subscribers = {},
     activeRequests = {},
     requestSerial = 0,
-    customApiRequestHookInstalled = false,
     status = {
         ready = false,
         loading = false,
@@ -520,6 +519,90 @@ local function customApiEndpointParts(value)
     return origin, key
 end
 
+local function environmentValue(name)
+    if os == nil or type(os.getenv) ~= "function" then
+        return nil
+    end
+    local ok, value = pcall(os.getenv, name)
+    if not ok or value == nil or tostring(value) == "" then
+        return nil
+    end
+    return tostring(value)
+end
+
+local function appendUniquePath(paths, seen, root, suffix)
+    local value = tostring(root or ""):gsub("\\", "/"):gsub("/+$", "")
+    if value == "" then return end
+    local path = value .. "/" .. suffix
+    if not seen[path] then
+        seen[path] = true
+        table.insert(paths, path)
+    end
+end
+
+local function gameConfigCandidates()
+    local paths, seen = {}, {}
+    local localAppData = environmentValue("LOCALAPPDATA")
+    local userProfile = environmentValue("USERPROFILE")
+    local home = environmentValue("HOME")
+    local xdgConfig = environmentValue("XDG_CONFIG_HOME")
+    for _, root in ipairs({ localAppData, userProfile and (userProfile .. "/AppData/Local") }) do
+        appendUniquePath(paths, seen, root, "Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
+    end
+    appendUniquePath(paths, seen, xdgConfig, "Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
+    appendUniquePath(paths, seen, xdgConfig, "Epic Games/Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
+    if home ~= nil then
+        appendUniquePath(paths, seen, home, ".config/Epic Games/Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
+        appendUniquePath(paths, seen, home, ".config/Epic/Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
+        appendUniquePath(paths, seen, home, ".config/Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
+    end
+    return paths
+end
+
+local function trimIni(value)
+    return tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function parseIniValue(value)
+    local text = trimIni(value)
+    if text:sub(1, 1) == '"' and text:sub(-1) == '"' then
+        text = text:sub(2, -2):gsub('\\"', '"'):gsub('\\\\', '\\')
+    end
+    return text
+end
+
+local function readGameConfigCustomApiUrls()
+    if io == nil or type(io.open) ~= "function" then
+        return nil, { code = "game_config_unavailable", message = "Lua file access is unavailable" }
+    end
+    local candidates = gameConfigCandidates()
+    for _, path in ipairs(candidates) do
+        local handle = io.open(path, "r")
+        if handle ~= nil then
+            local section, values = nil, {}
+            for line in handle:lines() do
+                local text = tostring(line or "")
+                if text:sub(1, 3) == "\239\187\191" then text = text:sub(4) end
+                local sectionName = text:match("^%s*%[(.-)%]%s*$")
+                if sectionName ~= nil then
+                    section = trimIni(sectionName)
+                elseif section == "/Script/Ragnarock.RagnarockSettings" then
+                    local raw = text:match("^%s*CustomApiURLs%s*=%s*(.-)%s*$")
+                    if raw ~= nil then
+                        table.insert(values, parseIniValue(raw))
+                    end
+                end
+            end
+            handle:close()
+            if #values > 0 then
+                state.config.gameConfigPath = path
+                return values
+            end
+        end
+    end
+    return nil, { code = "game_config_missing", message = "No Ragnarock Game.ini with CustomApiURLs was found" }
+end
+
 local function adoptCustomApiEndpoint(value, options)
     local origin, key = customApiEndpointParts(value)
     if origin == nil or key == nil then
@@ -536,41 +619,6 @@ local function adoptCustomApiEndpoint(value, options)
     Api.configure(config)
     emit("game.custom_api_url", config)
     return config
-end
-
-local function installCustomApiRequestHook()
-    if state.customApiRequestHookInstalled or type(RegisterHook) ~= "function" then
-        return state.customApiRequestHookInstalled
-    end
-    if _G.__RagnaCustomsApiProcessURLHookInstalled then
-        state.customApiRequestHookInstalled = true
-        return true
-    end
-    local function observeProcessUrl(_, url)
-        local value = unwrapRemoteValue(url)
-        local text = type(value) == "string" and value or nil
-        if text == nil and value ~= nil then
-            local stringOk, rendered = pcall(function() return value:ToString() end)
-            if stringOk and type(rendered) == "string" then text = rendered end
-        end
-        if text ~= nil then
-            local configured = adoptCustomApiEndpoint(text)
-            if configured ~= nil then
-                print("[RagnaCustomsApi] configured API from in-game VaRest URL base="
-                    .. tostring(configured.apiBaseUrl)
-                    .. " keyConfigured=" .. tostring(configured.apiKey ~= nil and configured.apiKey ~= "")
-                    .. "\n")
-            end
-        end
-    end
-    local ok = pcall(RegisterHook,
-        "/Script/VaRest.VaRestRequestJSON:ProcessURL",
-        observeProcessUrl)
-    if ok then
-        state.customApiRequestHookInstalled = true
-        _G.__RagnaCustomsApiProcessURLHookInstalled = true
-    end
-    return state.customApiRequestHookInstalled
 end
 
 local function splitCsv(value)
@@ -1743,53 +1791,20 @@ end
 -- so merely loading the library never reads or forwards game credentials.
 function Api.configureFromGameCustomApiUrls(options)
     options = options or {}
-    installCustomApiRequestHook()
-    local function valuesOf(value)
-        if type(value) == "table" then return value end
-        local result = {}
-        local forEachOk, forEach = pcall(function() return value.ForEach end)
-        if forEachOk and type(forEach) == "function" then
-            pcall(function()
-                value:ForEach(function(first, second)
-                    -- UE4SS TArray wrappers call ForEach with (index, element).
-                    -- Accept the one-argument form as well for reflected array
-                    -- wrappers that omit the index.
-                    local entry = second ~= nil and second or first
-                    if entry ~= nil then table.insert(result, entry) end
-                end)
-            end)
-        end
-        if #result == 0 then
-            local countOk, count = pcall(function() return tonumber(value:Num()) end)
-            if countOk and count ~= nil then
-                for index = 0, count - 1 do
-                    local itemOk, item = pcall(function() return value:Get(index) end)
-                    if itemOk and item ~= nil then table.insert(result, item) end
-                end
-            end
-        end
-        return result
-    end
-    if type(FindFirstOf) == "function" then
-        -- Ragnarock's live game instance owns the setting. Its runtime object
-        -- path is /Engine/Transient...:BP_GameInstance_Retail_C_...; read the
-        -- one documented property directly from that instance.
-        local ok, instance = pcall(function() return FindFirstOf("BP_GameInstance_Retail_C") end)
-        if ok and instance ~= nil then
-            local urlsOk, urls = pcall(function()
-                return instance:GetPropertyValue("CustomApiURLs")
-            end)
-            if urlsOk then
-                for _, value in ipairs(valuesOf(urls)) do
-                    local origin, key = customApiEndpointParts(value)
-                    if origin ~= nil and key ~= nil then
-                        return adoptCustomApiEndpoint(value, options)
-                    end
-                end
+    local urls, readError = readGameConfigCustomApiUrls()
+    if urls ~= nil then
+        for _, value in ipairs(urls) do
+            local origin, key = customApiEndpointParts(value)
+            if origin ~= nil and key ~= nil then
+                local configured = adoptCustomApiEndpoint(value, options)
+                print("[RagnaCustomsApi] configured API from Game.ini path=" .. tostring(state.config.gameConfigPath)
+                    .. " base=" .. tostring(configured.apiBaseUrl)
+                    .. " keyConfigured=" .. tostring(configured.apiKey ~= nil and configured.apiKey ~= "") .. "\n")
+                return configured
             end
         end
     end
-    return nil, { code = "custom_api_url_missing", message = "No configured /wanapi/score/{apiKey} endpoint was found" }
+    return nil, readError or { code = "custom_api_url_missing", message = "No configured /wanapi/score/{apiKey} endpoint was found" }
 end
 
 function Api.getRuntimePaths()
@@ -3084,10 +3099,5 @@ Api._internals = {
     parsePlaylistDetail = parsePlaylistDetail,
     parseVoteState = parseVoteState,
 }
-
--- Observe the game's own authenticated VaRest URL as soon as the library is
--- loaded. This runs before consumers begin song/result resolution and does not
--- inspect any config file or enumerate candidate settings objects.
-installCustomApiRequestHook()
 
 return Api

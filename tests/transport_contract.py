@@ -20,11 +20,12 @@ def main() -> int:
     assert "local votes = payload.votes" in source
     assert "local currentVote = votes.mine" in source
     assert "id = payload.songId" in source
-    assert "value:ForEach(function(first, second)" in source
-    assert 'FindFirstOf("BP_GameInstance_Retail_C")' in source
-    assert 'instance:GetPropertyValue("CustomApiURLs")' in source
-    assert '"/Script/VaRest.VaRestRequestJSON:ProcessURL"' in source
-    assert "configured API from in-game VaRest URL" in source
+    assert "local function gameConfigCandidates()" in source
+    assert "LOCALAPPDATA" in source
+    assert "WindowsNoEditor/Game.ini" in source
+    assert "local function readGameConfigCustomApiUrls()" in source
+    assert "configured API from Game.ini path=" in source
+    assert "GetPropertyValue(\"CustomApiURLs\")" not in source
     assert '"RagnarockSettings"' not in source
     assert "payload.Results or payload.results or payload.songs or payload" in source
     assert '"text", "Text", "label", "Label"' in source

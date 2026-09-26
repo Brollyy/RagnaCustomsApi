@@ -25,6 +25,8 @@ def main() -> int:
     assert "WindowsNoEditor/Game.ini" in source
     assert "local function readGameConfigCustomApiUrls()" in source
     assert "configured API from Game.ini path=" in source
+    assert "Epic Games/Ragnarock" not in source
+    assert "keyConfigured=" not in source
     assert "GetPropertyValue(\"CustomApiURLs\")" not in source
     assert '"RagnarockSettings"' not in source
     assert "payload.Results or payload.results or payload.songs or payload" in source

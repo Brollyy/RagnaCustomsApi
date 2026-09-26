@@ -544,17 +544,8 @@ local function gameConfigCandidates()
     local paths, seen = {}, {}
     local localAppData = environmentValue("LOCALAPPDATA")
     local userProfile = environmentValue("USERPROFILE")
-    local home = environmentValue("HOME")
-    local xdgConfig = environmentValue("XDG_CONFIG_HOME")
     for _, root in ipairs({ localAppData, userProfile and (userProfile .. "/AppData/Local") }) do
         appendUniquePath(paths, seen, root, "Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
-    end
-    appendUniquePath(paths, seen, xdgConfig, "Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
-    appendUniquePath(paths, seen, xdgConfig, "Epic Games/Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
-    if home ~= nil then
-        appendUniquePath(paths, seen, home, ".config/Epic Games/Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
-        appendUniquePath(paths, seen, home, ".config/Epic/Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
-        appendUniquePath(paths, seen, home, ".config/Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
     end
     return paths
 end
@@ -1800,8 +1791,7 @@ function Api.configureFromGameCustomApiUrls(options)
             if origin ~= nil and key ~= nil then
                 local configured = adoptCustomApiEndpoint(value, options)
                 print("[RagnaCustomsApi] configured API from Game.ini path=" .. tostring(state.config.gameConfigPath)
-                    .. " base=" .. tostring(configured.apiBaseUrl)
-                    .. " keyConfigured=" .. tostring(configured.apiKey ~= nil and configured.apiKey ~= "") .. "\n")
+                    .. " base=" .. tostring(configured.apiBaseUrl) .. "\n")
                 return configured
             end
         end

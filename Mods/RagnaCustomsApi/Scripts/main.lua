@@ -78,6 +78,5 @@ if type(apiOrError.setRuntimePaths) == "function" then
         gameDir = gameDir,
     })
 end
-
 writeLoadMarker(apiOrError)
 log("loaded " .. tostring(apiOrError.VERSION))

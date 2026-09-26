@@ -1,11 +1,13 @@
 local Api = {
-    VERSION = "0.2.3",
+    VERSION = "0.3.0",
 }
 
 local state = {
     config = {
         baseUrl = "https://ragnacustoms.com",
-        apiBaseUrl = "https://api.ragnacustoms.com",
+        apiBaseUrl = "https://ragnacustoms.com",
+        downloadBaseUrl = "https://api.ragnacustoms.com",
+        transport = "varest",
         preferApi = true,
         cacheTtlSeconds = 300,
         maxPreloadPages = 1,
@@ -20,7 +22,6 @@ local state = {
         gameDir = nil,
         apiKey = nil,
         headers = {},
-        useWanApi = false,
         gameConfigPath = nil,
         httpRequest = nil,
         httpGet = nil,
@@ -49,7 +50,6 @@ local state = {
     },
     subscribers = {},
     activeRequests = {},
-    voteGenerations = {},
     requestSerial = 0,
     status = {
         ready = false,
@@ -129,8 +129,126 @@ local function htmlDecode(value)
     return text
 end
 
-local function stripTags(value)
-    return normalizeSpace(htmlDecode(tostring(value or ""):gsub("<[^>]->", " ")))
+local stripTags
+
+local function htmlParse(source)
+    local root = { tag = "#root", attrs = {}, children = {}, text = "" }
+    local stack = { root }
+    local position = 1
+    local function whitespace(character)
+        return character == " " or character == "\t" or character == "\r" or character == "\n"
+    end
+    local function oneOf(character, values)
+        return values:find(character, 1, true) ~= nil
+    end
+    local function addText(value)
+        if value ~= "" then
+            local node = stack[#stack]
+            node.text = node.text .. value
+        end
+    end
+    local function parseTag(value)
+        local cursor, length = 1, #value
+        while cursor <= length and whitespace(value:sub(cursor, cursor)) do cursor = cursor + 1 end
+        local start = cursor
+        while cursor <= length and not whitespace(value:sub(cursor, cursor)) and value:sub(cursor, cursor) ~= "/" do cursor = cursor + 1 end
+        local name = value:sub(start, cursor - 1):lower()
+        local attrs = {}
+        while cursor <= length do
+            while cursor <= length and (whitespace(value:sub(cursor, cursor)) or value:sub(cursor, cursor) == "/") do cursor = cursor + 1 end
+            if cursor > length then break end
+            local keyStart = cursor
+            while cursor <= length and not whitespace(value:sub(cursor, cursor)) and not oneOf(value:sub(cursor, cursor), "=/>") do cursor = cursor + 1 end
+            local key = value:sub(keyStart, cursor - 1):lower()
+            while cursor <= length and whitespace(value:sub(cursor, cursor)) do cursor = cursor + 1 end
+            local attrValue = ""
+            if value:sub(cursor, cursor) == "=" then
+                cursor = cursor + 1
+                while cursor <= length and whitespace(value:sub(cursor, cursor)) do cursor = cursor + 1 end
+                local quote = value:sub(cursor, cursor)
+                if quote == '"' or quote == "'" then
+                    cursor = cursor + 1
+                    local valueStart = cursor
+                    while cursor <= length and value:sub(cursor, cursor) ~= quote do cursor = cursor + 1 end
+                    attrValue = value:sub(valueStart, cursor - 1)
+                    cursor = cursor + 1
+                else
+                    local valueStart = cursor
+                    while cursor <= length and not whitespace(value:sub(cursor, cursor)) and value:sub(cursor, cursor) ~= ">" do cursor = cursor + 1 end
+                    attrValue = value:sub(valueStart, cursor - 1)
+                end
+            end
+            if key ~= "" then attrs[key] = htmlDecode(attrValue) end
+        end
+        return name, attrs
+    end
+    while position <= #source do
+        local start = source:find("<", position, true)
+        if start == nil then addText(source:sub(position)); break end
+        addText(source:sub(position, start - 1))
+        local finish = source:find(">", start + 1, true)
+        if finish == nil then addText(source:sub(start)); break end
+        local token = source:sub(start + 1, finish - 1)
+        if token:sub(1, 3) == "!--" then
+            position = (source:find("-->", finish + 1, true) or #source - 2) + 3
+        elseif token:sub(1, 1) == "/" then
+            local closing = token:sub(2)
+            local closeStart = 1
+            while closeStart <= #closing and whitespace(closing:sub(closeStart, closeStart)) do closeStart = closeStart + 1 end
+            local closeEnd = closeStart
+            while closeEnd <= #closing and not whitespace(closing:sub(closeEnd, closeEnd)) and closing:sub(closeEnd, closeEnd) ~= ">" do closeEnd = closeEnd + 1 end
+            closing = closing:sub(closeStart, closeEnd - 1)
+            for index = #stack, 2, -1 do
+                if stack[index].tag == string.lower(closing or "") then
+                    for _ = #stack, index, -1 do table.remove(stack) end
+                    break
+                end
+            end
+            position = finish + 1
+        elseif token:sub(1, 1) == "!" or token:sub(1, 1) == "?" then
+            position = finish + 1
+        else
+            local selfClosing = token:sub(-1) == "/"
+            local name, attrs = parseTag(selfClosing and token:sub(1, -2) or token)
+            local node = { tag = name, attrs = attrs, children = {}, text = "", parent = stack[#stack] }
+            table.insert(stack[#stack].children, node)
+            if not selfClosing and name ~= "meta" and name ~= "link" and name ~= "img" and name ~= "br" and name ~= "input" then
+                table.insert(stack, node)
+            end
+            position = finish + 1
+        end
+    end
+    return root
+end
+
+local function htmlText(node)
+    local text = node.text or ""
+    for _, child in ipairs(node.children or {}) do text = text .. htmlText(child) end
+    return stripTags(text)
+end
+
+local function htmlFind(node, tag, className)
+    local result = {}
+    if node.tag == tag and (className == nil or (node.attrs.class or ""):find(className, 1, true) ~= nil) then
+        table.insert(result, node)
+    end
+    for _, child in ipairs(node.children or {}) do
+        for _, match in ipairs(htmlFind(child, tag, className)) do table.insert(result, match) end
+    end
+    return result
+end
+
+stripTags = function(value)
+    local source, text, position = tostring(value or ""), {}, 1
+    local inside = false
+    while position <= #source do
+        local character = source:sub(position, position)
+        if character == "<" then inside = true
+        elseif character == ">" then inside = false
+        elseif not inside then table.insert(text, character) end
+        position = position + 1
+    end
+    return normalizeSpace(htmlDecode(table.concat(text)))
 end
 
 local function shellQuote(value)
@@ -183,6 +301,14 @@ local function joinPath(left, right)
     return l .. "/" .. r
 end
 
+local function hostPath(path)
+    local normalized = tostring(path or ""):gsub("\\", "/")
+    if normalized:sub(1, 3):lower() == "z:/" then
+        return normalized:sub(3)
+    end
+    return normalized
+end
+
 local function parentPath(path)
     local clean = tostring(path or ""):gsub("\\", "/"):gsub("/+$", "")
     return clean:match("^(.*)/[^/]+$") or ""
@@ -198,69 +324,155 @@ local function urlEncode(value)
     end)
 end
 
-local function jsonDecodeString(value)
-    local text = tostring(value or "")
-    text = text:gsub("\\/", "/")
-    text = text:gsub('\\"', '"')
-    text = text:gsub("\\\\", "\\")
-    text = text:gsub("\\n", "\n")
-    text = text:gsub("\\r", "\r")
-    text = text:gsub("\\t", "\t")
-    return text
-end
+-- VaRest exposes a JSON object while the shell transport exposes text. Keep
+-- the public response contract transport-neutral by decoding the latter once
+-- here instead of making each endpoint search the JSON with patterns.
+local JSON_NULL = {}
 
-local function jsonStringField(objectText, name)
-    local value = tostring(objectText or ""):match('"' .. name .. '"%s*:%s*"(.-)"')
-    if value == nil then
+local function decodeJson(text)
+    local source = tostring(text or "")
+    -- VaRest may expose FString storage with a UTF-8 BOM or a terminal NUL.
+    -- Both are transport framing, not JSON content.
+    if source:sub(1, 3) == "\239\187\191" then source = source:sub(4) end
+    source = source:gsub("%z+$", "")
+    local position = 1
+    local function isDigit(character)
+        return character ~= "" and character >= "0" and character <= "9"
+    end
+    local function isHexDigit(character)
+        return isDigit(character)
+            or (character >= "a" and character <= "f")
+            or (character >= "A" and character <= "F")
+    end
+
+    local function skipWhitespace()
+        while position <= #source do
+            local character = source:sub(position, position)
+            if character ~= " " and character ~= "\t" and character ~= "\r" and character ~= "\n" then break end
+            position = position + 1
+        end
+    end
+
+    local parseValue
+    local function parseString()
+        if source:sub(position, position) ~= '"' then return nil end
+        position = position + 1
+        local result = {}
+        while position <= #source do
+            local character = source:sub(position, position)
+            position = position + 1
+            if character == '"' then return table.concat(result) end
+            if character ~= "\\" then
+                table.insert(result, character)
+            else
+                local escaped = source:sub(position, position)
+                position = position + 1
+                local replacements = { ['"'] = '"', ["\\"] = "\\", ["/"] = "/", b = "\b", f = "\f", n = "\n", r = "\r", t = "\t" }
+                if escaped == "u" then
+                    local hex = source:sub(position, position + 3)
+                    for index = 1, 4 do
+                        if not isHexDigit(hex:sub(index, index)) then return nil end
+                    end
+                    table.insert(result, "\\u" .. hex)
+                    position = position + 4
+                else
+                    table.insert(result, replacements[escaped] or escaped)
+                end
+            end
+        end
         return nil
     end
-    return jsonDecodeString(value)
-end
 
-local function jsonNumberField(objectText, name)
-    return tonumber(tostring(objectText or ""):match('"' .. name .. '"%s*:%s*(-?%d+%.?%d*)'))
-end
-
-local function jsonBooleanField(objectText, name)
-    local value = tostring(objectText or ""):match('"' .. name .. '"%s*:%s*(true)')
-        or tostring(objectText or ""):match('"' .. name .. '"%s*:%s*(false)')
-    if value == "true" then
-        return true
-    end
-    if value == "false" then
-        return false
-    end
-    return nil
-end
-
-local function jsonStringAny(objectText, names)
-    for _, name in ipairs(names) do
-        local value = jsonStringField(objectText, name)
-        if value ~= nil then
-            return value
+    local function parseNumber()
+        local start = position
+        if source:sub(position, position) == "-" then position = position + 1 end
+        local digits = 0
+        while isDigit(source:sub(position, position)) do
+            position = position + 1
+            digits = digits + 1
         end
-    end
-    return nil
-end
-
-local function jsonNumberAny(objectText, names)
-    for _, name in ipairs(names) do
-        local value = jsonNumberField(objectText, name)
-        if value ~= nil then
-            return value
+        if source:sub(position, position) == "." then
+            position = position + 1
+            while isDigit(source:sub(position, position)) do
+                position = position + 1
+                digits = digits + 1
+            end
         end
-    end
-    return nil
-end
-
-local function jsonBooleanAny(objectText, names)
-    for _, name in ipairs(names) do
-        local value = jsonBooleanField(objectText, name)
-        if value ~= nil then
-            return value
+        if digits == 0 then position = start; return nil end
+        if source:sub(position, position) == "e" or source:sub(position, position) == "E" then
+            position = position + 1
+            if source:sub(position, position) == "+" or source:sub(position, position) == "-" then position = position + 1 end
+            local exponentDigits = 0
+            while isDigit(source:sub(position, position)) do
+                position = position + 1
+                exponentDigits = exponentDigits + 1
+            end
+            if exponentDigits == 0 then position = start; return nil end
         end
+        local value = tonumber(source:sub(start, position - 1))
+        if value == nil then return nil end
+        return value
     end
-    return nil
+
+    local function parseArray()
+        position = position + 1
+        local result = {}
+        skipWhitespace()
+        if source:sub(position, position) == "]" then position = position + 1; return result end
+        while position <= #source do
+            local value = parseValue()
+            if value == nil then return nil end
+            table.insert(result, value)
+            skipWhitespace()
+            local separator = source:sub(position, position)
+            position = position + 1
+            if separator == "]" then return result end
+            if separator ~= "," then return nil end
+            skipWhitespace()
+        end
+        return nil
+    end
+
+    local function parseObject()
+        position = position + 1
+        local result = {}
+        skipWhitespace()
+        if source:sub(position, position) == "}" then position = position + 1; return result end
+        while position <= #source do
+            local key = parseString()
+            if key == nil then return nil end
+            skipWhitespace()
+            if source:sub(position, position) ~= ":" then return nil end
+            position = position + 1
+            local value = parseValue()
+            if value == nil then return nil end
+            result[key] = value
+            skipWhitespace()
+            local separator = source:sub(position, position)
+            position = position + 1
+            if separator == "}" then return result end
+            if separator ~= "," then return nil end
+            skipWhitespace()
+        end
+        return nil
+    end
+
+    parseValue = function()
+        skipWhitespace()
+        local character = source:sub(position, position)
+        if character == '"' then return parseString() end
+        if character == "{" then return parseObject() end
+        if character == "[" then return parseArray() end
+        if source:sub(position, position + 3) == "true" then position = position + 4; return true end
+        if source:sub(position, position + 4) == "false" then position = position + 5; return false end
+        if source:sub(position, position + 3) == "null" then position = position + 4; return JSON_NULL end
+        return parseNumber()
+    end
+
+    local value = parseValue()
+    skipWhitespace()
+    if value == nil or position <= #source then return nil end
+    return value
 end
 
 local function jsonEscape(value)
@@ -289,52 +501,115 @@ local function unwrapRemoteValue(value)
     return value
 end
 
-local function redactEndpoint(value)
-    local endpoint = tostring(value or "")
-    return endpoint:gsub("(/wanapi/score/)[^/%?#]+", "%1[redacted]")
+local function customApiEndpointParts(value)
+    local endpoint = tostring(unwrapRemoteValue(value) or "")
+    local schemeEnd = endpoint:find("://", 1, true)
+    if schemeEnd == nil then return nil end
+    local authorityStart = schemeEnd + 3
+    local pathStart = endpoint:find("/", authorityStart, true)
+    if pathStart == nil then return nil end
+    local origin = endpoint:sub(1, pathStart - 1)
+    local marker = "/wanapi/score/"
+    local keyStart = endpoint:find(marker, pathStart, true)
+    if keyStart == nil then return nil end
+    keyStart = keyStart + #marker
+    local keyEnd = endpoint:find("/", keyStart, true) or endpoint:find("?", keyStart, true) or endpoint:find("#", keyStart, true) or (#endpoint + 1)
+    local key = endpoint:sub(keyStart, keyEnd - 1)
+    if origin == "" or key == "" then return nil end
+    return origin, key
 end
 
-local function deriveVoteEndpoint(scoreEndpoint)
-    local endpoint = trim(scoreEndpoint)
-    local scheme, host, path = endpoint:match("^(https?)://([^/%?#]+)([^%?#]*)/*$")
-    if scheme == nil or host == nil or path == nil then
-        return nil, "configured custom leaderboard endpoint is not a valid HTTP URL"
+local function environmentValue(name)
+    if os == nil or type(os.getenv) ~= "function" then
+        return nil
     end
-    local hostOnly = host:match("^%[([^%]]+)%]") or host:match("^([^:]+)") or host
-    if scheme == "http" and hostOnly ~= "127.0.0.1" and hostOnly ~= "localhost" and hostOnly ~= "::1" then
-        return nil, "unencrypted custom leaderboard endpoints are allowed only on loopback"
+    local ok, value = pcall(os.getenv, name)
+    if not ok or value == nil or tostring(value) == "" then
+        return nil
     end
-    if path:match("^/wanapi/score/[^/]+/?$") == nil then
-        return nil, "configured custom leaderboard endpoint must end with /wanapi/score/{apiKey}"
-    end
-    return endpoint:gsub("/+$", "") .. "/vote", nil
+    return tostring(value)
 end
 
-local function parseVoteResponse(content)
-    local text = tostring(content or "")
-    local errorCode = jsonStringField(text, "error")
-    if errorCode ~= nil then
-        return nil, {
-            code = errorCode,
-            message = jsonStringField(text, "message") or "vote request failed",
-        }
+local function appendUniquePath(paths, seen, root, suffix)
+    local value = tostring(root or ""):gsub("\\", "/"):gsub("/+$", "")
+    if value == "" then return end
+    local path = value .. "/" .. suffix
+    if not seen[path] then
+        seen[path] = true
+        table.insert(paths, path)
     end
-    local upvotes = jsonNumberField(text, "upvotes")
-    local downvotes = jsonNumberField(text, "downvotes")
-    if upvotes == nil or downvotes == nil then
-        return nil, { code = "invalid_response", message = "vote response is missing counts" }
+end
+
+local function gameConfigCandidates()
+    local paths, seen = {}, {}
+    local localAppData = environmentValue("LOCALAPPDATA")
+    local userProfile = environmentValue("USERPROFILE")
+    for _, root in ipairs({ localAppData, userProfile and (userProfile .. "/AppData/Local") }) do
+        appendUniquePath(paths, seen, root, "Ragnarock/Saved/Config/WindowsNoEditor/Game.ini")
     end
-    local currentVote = jsonStringField(text, "currentVote")
-    if currentVote ~= nil and currentVote ~= "up" and currentVote ~= "down" then
-        return nil, { code = "invalid_response", message = "vote response contains an invalid selection" }
+    return paths
+end
+
+local function trimIni(value)
+    return tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", "")
+end
+
+local function parseIniValue(value)
+    local text = trimIni(value)
+    if text:sub(1, 1) == '"' and text:sub(-1) == '"' then
+        text = text:sub(2, -2):gsub('\\"', '"'):gsub('\\\\', '\\')
     end
-    return {
-        songId = jsonNumberField(text, "songId"),
-        beatmap = jsonStringField(text, "beatmap"),
-        currentVote = currentVote,
-        upvotes = upvotes,
-        downvotes = downvotes,
-    }, nil
+    return text
+end
+
+local function readGameConfigCustomApiUrls()
+    if io == nil or type(io.open) ~= "function" then
+        return nil, { code = "game_config_unavailable", message = "Lua file access is unavailable" }
+    end
+    local candidates = gameConfigCandidates()
+    for _, path in ipairs(candidates) do
+        local handle = io.open(path, "r")
+        if handle ~= nil then
+            local section, values = nil, {}
+            for line in handle:lines() do
+                local text = tostring(line or "")
+                if text:sub(1, 3) == "\239\187\191" then text = text:sub(4) end
+                local sectionName = text:match("^%s*%[(.-)%]%s*$")
+                if sectionName ~= nil then
+                    section = trimIni(sectionName)
+                elseif section == "/Script/Ragnarock.RagnarockSettings" then
+                    local raw = text:match("^%s*CustomApiURLs%s*=%s*(.-)%s*$")
+                    if raw ~= nil then
+                        table.insert(values, parseIniValue(raw))
+                    end
+                end
+            end
+            handle:close()
+            if #values > 0 then
+                state.config.gameConfigPath = path
+                return values
+            end
+        end
+    end
+    return nil, { code = "game_config_missing", message = "No Ragnarock Game.ini with CustomApiURLs was found" }
+end
+
+local function adoptCustomApiEndpoint(value, options)
+    local origin, key = customApiEndpointParts(value)
+    if origin == nil or key == nil then
+        return nil
+    end
+    local config = {}
+    if options == nil or options.configureBase ~= false then
+        config.baseUrl = origin
+        config.apiBaseUrl = origin
+    end
+    if options == nil or options.configureApiKey ~= false then
+        config.apiKey = key
+    end
+    Api.configure(config)
+    emit("game.custom_api_url", config)
+    return config
 end
 
 local function splitCsv(value)
@@ -409,7 +684,7 @@ local function defaultListFiles(root)
     if not shellFallbackAvailable() then
         return setError("POSIX file listing is disabled or unavailable; provide a listFiles hook")
     end
-    local quoted = shellQuote(root)
+    local quoted = shellQuote(hostPath(root))
     local command = string.format("if [ -d %s ]; then find %s -maxdepth 4 -type f; fi", quoted, quoted)
     local output, err = readPipe(command)
     if err then
@@ -433,7 +708,8 @@ local function defaultReadFile(path)
     if io == nil or type(io.open) ~= "function" then
         return setError("io.open is unavailable and no readFile hook was provided")
     end
-    local handle, err = io.open(path, "rb")
+    local resolvedPath = hostPath(path)
+    local handle, err = io.open(resolvedPath, "rb")
     if handle == nil then
         return nil, err
     end
@@ -453,7 +729,8 @@ local function defaultWriteFile(path, content)
     if io == nil or type(io.open) ~= "function" then
         return setError("io.open is unavailable and no writeFile hook was provided")
     end
-    local handle, err = io.open(path, "wb")
+    local resolvedPath = hostPath(path)
+    local handle, err = io.open(resolvedPath, "wb")
     if handle == nil then
         return nil, err
     end
@@ -469,25 +746,33 @@ local function writeTextFile(path, content)
     return defaultWriteFile(path, content)
 end
 
+local requestHeaders
+
 local function defaultHttpGet(url)
     local headerArgs = ""
-    for name, value in pairs(state.config.headers or {}) do
+    for name, value in pairs(requestHeaders()) do
         headerArgs = headerArgs .. " -H " .. shellQuote(tostring(name) .. ": " .. tostring(value))
-    end
-    if state.config.apiKey ~= nil then
-        headerArgs = headerArgs .. " -H " .. shellQuote("X-API-Key: " .. tostring(state.config.apiKey))
     end
     local command = string.format("%s -fsSL%s %s", shellQuote(state.config.curlPath), headerArgs, shellQuote(url))
     return readPipe(command)
 end
 
-local function defaultHttpPost(url, body)
-    local headerArgs = " -H " .. shellQuote("Content-Type: application/x-www-form-urlencoded")
+requestHeaders = function()
+    local headers = {}
     for name, value in pairs(state.config.headers or {}) do
-        headerArgs = headerArgs .. " -H " .. shellQuote(tostring(name) .. ": " .. tostring(value))
+        headers[tostring(name)] = tostring(value)
     end
-    if state.config.apiKey ~= nil then
-        headerArgs = headerArgs .. " -H " .. shellQuote("X-API-Key: " .. tostring(state.config.apiKey))
+    if state.config.apiKey ~= nil and state.config.apiKey ~= "" then
+        headers["X-API-Key"] = tostring(state.config.apiKey)
+    end
+    return headers
+end
+
+local function defaultHttpPost(url, body)
+    local contentType = tostring(body or ""):match("^%s*{") and "application/json" or "application/x-www-form-urlencoded"
+    local headerArgs = " -H " .. shellQuote("Content-Type: " .. contentType)
+    for name, value in pairs(requestHeaders()) do
+        headerArgs = headerArgs .. " -H " .. shellQuote(tostring(name) .. ": " .. tostring(value))
     end
     local command = string.format(
         "%s -fsSL -X POST%s --data %s %s",
@@ -503,12 +788,12 @@ local function defaultDownloadFile(url, destination)
     if not shellFallbackAvailable() then
         return setError("POSIX shell download is disabled or unavailable; provide a downloadFile hook")
     end
-    local command = string.format(
-        "%s -fL --create-dirs -o %s %s",
-        shellQuote(state.config.curlPath),
-        shellQuote(destination),
-        shellQuote(url)
-    )
+    local headerArgs = ""
+    for name, value in pairs(requestHeaders()) do
+        headerArgs = headerArgs .. " -H " .. shellQuote(tostring(name) .. ": " .. tostring(value))
+    end
+    local command = string.format("%s -fL --create-dirs%s -o %s %s",
+        shellQuote(state.config.curlPath), headerArgs, shellQuote(destination), shellQuote(url))
     local _, err = readPipe(command)
     if err then
         return nil, err
@@ -572,14 +857,14 @@ end
 
 local function httpGet(url)
     if type(state.config.httpGet) == "function" then
-        return state.config.httpGet(url, state.config)
+        return state.config.httpGet(url, state.config, requestHeaders())
     end
     return defaultHttpGet(url)
 end
 
 local function httpPost(url, body)
     if type(state.config.httpPost) == "function" then
-        return state.config.httpPost(url, body, state.config)
+        return state.config.httpPost(url, body, state.config, requestHeaders())
     end
     return defaultHttpPost(url, body)
 end
@@ -599,15 +884,35 @@ local function responseString(value)
     if type(value) == "string" then
         return value
     end
+    local valueType = safeObjectCall(function() return tostring(value:type()) end, "")
+    if valueType == "RemoteUnrealParam" or valueType == "LocalUnrealParam" then
+        local inner = safeObjectCall(function() return value:get() end, nil)
+        if inner ~= nil and inner ~= value then
+            return responseString(inner)
+        end
+    end
+    if valueType == "FString" or valueType == "FText" then
+        local rendered = safeObjectCall(function() return value:ToString() end, nil)
+        if rendered ~= nil and not tostring(rendered):find("DEPRECATED", 1, true) then
+            return tostring(rendered)
+        end
+    end
     local stringValue = safeObjectCall(function()
         return value:ToString()
     end, nil)
     if stringValue ~= nil then
+        if type(stringValue) == "string" then return stringValue end
+        local rendered = safeObjectCall(function() return stringValue:ToString() end, nil)
+        if rendered ~= nil then return tostring(rendered) end
         return tostring(stringValue)
     end
     local unwrapped = unwrapRemoteValue(value)
     if type(unwrapped) == "string" then
         return unwrapped
+    end
+    if unwrapped ~= nil and unwrapped ~= value then
+        local rendered = safeObjectCall(function() return unwrapped:ToString() end, nil)
+        if rendered ~= nil then return tostring(rendered) end
     end
     return nil
 end
@@ -620,14 +925,119 @@ local function responseBody(request)
         return request:GetResponseContentAsString(false)
     end, nil)
     local returnedText = responseString(returned)
-    if returnedText ~= nil and returnedText ~= "" then
+    if returnedText ~= nil and returnedText ~= ""
+        and not returnedText:find("DEPRECATED", 1, true) then
         return returnedText
     end
 
     local property = safeObjectCall(function()
         return request.ResponseContent
     end, nil)
-    return responseString(property) or ""
+    local propertyText = responseString(property)
+    if propertyText ~= nil and propertyText ~= "" then return propertyText end
+    return ""
+end
+
+local function completedResponseBody(request)
+    local responseObject = safeObjectCall(function() return request.ResponseJsonObj end, nil)
+    if responseObject == nil then
+        responseObject = safeObjectCall(function() return request:GetPropertyValue("ResponseJsonObj") end, nil)
+    end
+    if type(StaticFindObject) == "function" and type(request.CallFunction) == "function" then
+        local fn = safeObjectCall(function()
+            return StaticFindObject("Function /Script/VaRest.VaRestRequestJSON:GetResponseObject")
+        end, nil)
+        if fn ~= nil then
+            local reflectedObject = safeObjectCall(function() return request:CallFunction(fn) end, nil)
+            if reflectedObject ~= nil then responseObject = reflectedObject end
+        end
+    end
+    if responseObject ~= nil then
+        local rawText = responseBody(request)
+        if rawText ~= nil and rawText:find('"Results"', 1, true) ~= nil then
+            return rawText
+        end
+        -- Scalar/nested catalog payloads are complete in the response-content
+        -- accessor. Prefer that text over a reflected object, which can be a
+        -- stale partial object when VaRest completes asynchronously.
+        if rawText ~= nil and (
+            rawText:find('"songId"', 1, true) ~= nil
+            or rawText:find('"votes"', 1, true) ~= nil
+            or rawText:find('"upvotes"', 1, true) ~= nil
+            or rawText:find('"currentVote"', 1, true) ~= nil
+            or rawText:find('"username"', 1, true) ~= nil
+            or rawText:find('"pageSize"', 1, true) ~= nil
+        ) then
+            return rawText
+        end
+        local function jsonFieldFunction(name)
+            if type(StaticFindObject) ~= "function" then return nil end
+            return safeObjectCall(function()
+                return StaticFindObject("Function /Script/VaRest.VaRestJsonObject:" .. name)
+            end, nil)
+        end
+        local function jsonField(object, functionName, fieldName, fallback)
+            local fn = jsonFieldFunction(functionName)
+            if fn == nil or object == nil or type(object.CallFunction) ~= "function" then
+                return fallback
+            end
+            local field = safeObjectCall(function()
+                return FName(fieldName, EFindName.FNAME_Find)
+            end, fieldName)
+            return unwrapRemoteValue(safeObjectCall(function()
+                return object:CallFunction(fn, { FieldName = field })
+            end, fallback))
+        end
+        local resultObjects = unwrapRemoteValue(jsonField(responseObject, "GetObjectArrayField", "Results", nil))
+        if resultObjects == nil then
+            resultObjects = unwrapRemoteValue(safeObjectCall(function()
+                return responseObject:GetObjectArrayField("Results")
+            end, nil))
+        end
+        if type(resultObjects) == "table" and #resultObjects > 0 then
+            local encodedItems = {}
+            for _, item in ipairs(resultObjects) do
+                item = unwrapRemoteValue(item)
+                local id = unwrapRemoteValue(jsonField(item, "GetIntegerField", "Id", nil))
+                    or unwrapRemoteValue(jsonField(item, "GetNumberField", "Id", nil))
+                    or unwrapRemoteValue(safeObjectCall(function() return item:GetIntegerField("Id") end, nil))
+                local function stringField(name)
+                    local direct = unwrapRemoteValue(safeObjectCall(function()
+                        return item:GetStringField(name)
+                    end, nil))
+                    local directText = responseString(direct)
+                    if directText ~= nil and directText ~= "" then return directText end
+                    local reflected = unwrapRemoteValue(jsonField(item, "GetStringField", name, nil))
+                    return responseString(reflected) or tostring(reflected or "")
+                end
+                local name = stringField("Name")
+                local author = stringField("Author")
+                local mapper = stringField("Mapper")
+                local difficulties = stringField("Difficulties")
+                if id ~= nil then
+                    table.insert(encodedItems, string.format(
+                        "{\"Id\":%s,\"Name\":\"%s\",\"Author\":\"%s\",\"Mapper\":\"%s\",\"Difficulties\":\"%s\"}",
+                        tostring(id), jsonEscape(name), jsonEscape(author), jsonEscape(mapper), jsonEscape(difficulties)))
+                end
+            end
+            if #encodedItems > 0 then return "[" .. table.concat(encodedItems, ",") .. "]" end
+        end
+        local encoded = nil
+        if type(StaticFindObject) == "function" and type(responseObject.CallFunction) == "function" then
+            local fn = safeObjectCall(function()
+                return StaticFindObject("Function /Script/VaRest.VaRestJsonObject:EncodeJson")
+            end, nil)
+            if fn ~= nil then
+                encoded = safeObjectCall(function() return responseObject:CallFunction(fn) end, nil)
+            end
+        end
+        if encoded == nil then
+            encoded = safeObjectCall(function() return responseObject:EncodeJson() end, nil)
+        end
+        local encodedText = responseString(encoded)
+        if encodedText ~= nil and encodedText ~= "" then return encodedText end
+    end
+    return responseBody(request, true)
 end
 
 local function constructVaRestRequest()
@@ -745,8 +1155,14 @@ local function defaultHttpRequest(method, url, body, callback)
     end
 
     local configured, configuredError = pcall(function()
-        request:SetVerb(method == "GET" and 0 or 2)
+        -- VaRest uses 0=GET, 1=POST, 2=PUT. Preserve the caller's method;
+        -- mapping every non-GET request to PUT breaks catalog vote/review POSTs.
+        local verb = method == "GET" and 0 or method == "POST" and 1 or method == "PUT" and 2 or 1
+        request:SetVerb(verb)
         request:SetContentType(2)
+        for name, value in pairs(requestHeaders()) do
+            request:SetHeader(tostring(name), tostring(value))
+        end
         if method ~= "GET" then
             local requestObject = unwrapRemoteValue(request:GetRequestObject())
             requestObject:DecodeJson(body or "{}", true)
@@ -772,25 +1188,24 @@ local function defaultHttpRequest(method, url, body, callback)
             local responseCode = safeObjectCall(function()
                 return tonumber(unwrapRemoteValue(request:GetResponseCode()))
             end, 0)
-            -- Some UE4SS/VaRest builds do not expose the completion delegate
-            -- and do not transition the reflected request status reliably.
-            -- A positive HTTP response code is still definitive completion.
             if responseCode > 0 then
                 local content = responseBody(request)
-                finish({ status = responseCode, body = content }, nil)
-                return
+                if content == nil or content == "" then content = completedResponseBody(request) end
+                if content ~= nil and content ~= "" then
+                    finish({ status = responseCode, body = content }, nil)
+                    return
+                end
             end
-            if status == 2 then
-                finish(nil, { code = "transport_error", message = "HTTP request failed" })
-                return
+            if status == 2 or status == 4 then
+                local content = responseBody(request)
+                if content == nil or content == "" then content = completedResponseBody(request) end
+                if content ~= nil and content ~= "" then
+                    finish({ status = responseCode > 0 and responseCode or 200, body = content }, nil)
+                    return
+                end
             end
             if status == 3 then
-                local content = responseBody(request)
-                if responseCode > 0 then
-                    finish({ status = responseCode, body = content }, nil)
-                else
-                    finish(nil, { code = "transport_error", message = "HTTP request failed" })
-                end
+                finish(nil, { code = "transport_error", message = "HTTP request failed" })
                 return
             end
             if attempts >= 60 then
@@ -799,7 +1214,7 @@ local function defaultHttpRequest(method, url, body, callback)
             end
             ExecuteWithDelay(500, pollStatus)
         end
-        ExecuteWithDelay(500, pollStatus)
+        pcall(ExecuteWithDelay, 500, pollStatus)
     end
 
     ExecuteWithDelay(30000, function()
@@ -818,75 +1233,112 @@ end
 
 local function httpRequest(method, url, body, callback)
     if type(state.config.httpRequest) == "function" then
-        return state.config.httpRequest(method, url, body, callback, state.config)
+        return state.config.httpRequest(method, url, body, callback, state.config, requestHeaders())
     end
     return defaultHttpRequest(method, url, body, callback)
 end
 
-local function listFromAnchors(fragment)
-    local result = {}
-    for label in tostring(fragment or ""):gmatch("<a[^>]*>(.-)</a>") do
-        local clean = stripTags(label)
-        if clean ~= "" then
-            table.insert(result, clean)
+local function vaRestAvailable()
+    return type(state.config.httpRequest) == "function"
+        or (type(StaticFindObject) == "function" and type(StaticConstructObject) == "function" and type(ExecuteWithDelay) == "function")
+end
+
+local function usesVaRest()
+    return state.config.transport == "varest"
+end
+
+local function apiRequest(method, path, body, callback)
+    local url = joinUrl(state.config.apiBaseUrl, path)
+    local function complete(response, err)
+        if err ~= nil then
+            return callback(nil, err)
         end
-    end
-    if #result == 0 then
-        local clean = stripTags(fragment)
-        if clean ~= "" then
-            table.insert(result, clean)
+        local status = tonumber(response and response.status)
+        if status ~= nil and (status < 200 or status >= 300) then
+            return callback(nil, {
+                code = "http_error",
+                status = status,
+                message = "API returned HTTP " .. tostring(status),
+            })
         end
+        return callback(response, nil)
     end
-    return result
-end
+    if usesVaRest() then
+        if not vaRestAvailable() then
+            return complete(nil, { code = "transport_unavailable", message = "VaRest transport is selected but unavailable" })
+        end
+        return httpRequest(method, url, body, complete)
+    end
 
-local function parseLevels(fragment)
-    local levels = {}
-    for level in tostring(fragment or ""):gmatch("<div class=['\"]level[^>]-.-<span>(%d+)</span>") do
-        table.insert(levels, tonumber(level))
+    local responseBody, err
+    if method == "GET" then
+        responseBody, err = httpGet(url)
+    else
+        responseBody, err = httpPost(url, body)
     end
-    if #levels > 0 then
-        return levels
+    if err ~= nil then
+        return complete(nil, err)
     end
-    for level in tostring(fragment or ""):gmatch("<span>(%d+)</span>") do
-        table.insert(levels, tonumber(level))
-    end
-    return levels
-end
-
-local function parseVotes(fragment)
-    local up, down = tostring(fragment or ""):match("</i>%s*(%d+)%s*<i[^>]-fa%-arrow%-down[^>]->%s*</i>%s*(%d+)")
-    return tonumber(up) or 0, tonumber(down) or 0
-end
-
-local function extractFirst(fragment, pattern)
-    return tostring(fragment or ""):match(pattern)
+    return complete({ status = 200, body = responseBody }, nil)
 end
 
 local function parseSongRow(row)
-    local id = tonumber(row:match("ragnac://install/(%d+)") or row:match("/songs/ddl/(%d+)") or row:match("data%-song%-id=['\"](%d+)['\"]"))
+    local function trailingNumber(value)
+        local source = tostring(value or "")
+        local digits = ""
+        for index = #source, 1, -1 do
+            local character = source:sub(index, index)
+            if character < "0" or character > "9" then break end
+            digits = character .. digits
+        end
+        return tonumber(digits)
+    end
+    local idSource
+    local function visit(node)
+        local value = node.attrs["data-song-id"] or node.attrs.href
+        if value ~= nil and idSource == nil then idSource = value end
+        for _, child in ipairs(node.children or {}) do visit(child) end
+    end
+    visit(row)
+    local id = trailingNumber(idSource)
     if id == nil then
         return nil
     end
 
-    local titleBlock = extractFirst(row, '<div class="title">(.-)</div>') or row
-    local slug, titleHtml = titleBlock:match('href="https://ragnacustoms%.com/song/([^"]+)">(.-)</a>')
-    if slug == nil then
-        slug, titleHtml = titleBlock:match('href="/song/([^"]+)">(.-)</a>')
+    local title, slug, author, mapper, cover
+    local difficulties, upvotes, downvotes, bpm = {}, 0, 0, nil
+    local function inspect(node)
+        local className = node.attrs.class or ""
+        if node.tag == "div" and className:find("title", 1, true) ~= nil then
+            title = htmlText(node)
+            for _, anchor in ipairs(htmlFind(node, "a")) do
+                local href = anchor.attrs.href or ""
+                local slash = href:find("/song/", 1, true)
+                if slash ~= nil then
+                    slug = href:sub(slash + 6)
+                    local query = slug:find("?", 1, true) or slug:find("#", 1, true)
+                    if query ~= nil then slug = slug:sub(1, query - 1) end
+                end
+            end
+        elseif node.tag == "div" and className:find("author", 1, true) ~= nil then
+            author = htmlText(node)
+        elseif node.tag == "div" and className:find("mapper", 1, true) ~= nil then
+            mapper = htmlText(node)
+        elseif node.tag == "img" and node.attrs.src ~= nil then
+            cover = node.attrs.src
+        elseif node.tag == "div" and className:find("level-list", 1, true) ~= nil then
+            for _, span in ipairs(htmlFind(node, "span")) do table.insert(difficulties, tonumber(htmlText(span))) end
+        elseif node.tag == "div" and className:find("up_down_vote", 1, true) ~= nil then
+            local numbers = {}
+            for _, child in ipairs(htmlFind(node, "i")) do
+                local text = htmlText(child)
+                if text ~= "" then table.insert(numbers, tonumber(text)) end
+            end
+            upvotes, downvotes = numbers[1] or 0, numbers[2] or 0
+        end
+        for _, child in ipairs(node.children or {}) do inspect(child) end
     end
-
-    local authorBlock = extractFirst(row, '<div class="author">(.-)</div>') or ""
-    local mapperBlock = extractFirst(row, '<div class="mapper">(.-)</div>') or ""
-    local levelBlock = extractFirst(row, '<div class="level%-list">(.-)</td>') or row
-    local voteBlock = extractFirst(row, '<div class="up_down_vote".-</div>') or ""
-    local upvotes, downvotes = parseVotes(voteBlock)
-    local cover = row:match('src="([^"]-/covers/%d+%.webp[^"]*)"') or row:match('src="(/covers/%d+%.webp[^"]*)"')
-
-    local bpm = nil
-    local afterLevels = row:match('<div class="level%-list">.-</div>%s*</td>%s*<td>%s*(%d+)%s*</td>')
-    if afterLevels then
-        bpm = tonumber(afterLevels)
-    end
+    inspect(row)
 
     local installText = "Unknown"
     if installed == true then
@@ -898,10 +1350,10 @@ local function parseSongRow(row)
     return {
         id = id,
         slug = slug,
-        title = stripTags(titleHtml or ""),
-        artists = listFromAnchors(authorBlock),
-        mapper = stripTags(mapperBlock),
-        difficulties = parseLevels(levelBlock),
+        title = title or "",
+        artists = splitCsv(author),
+        mapper = mapper or "",
+        difficulties = difficulties,
         bpm = bpm,
         upvotes = upvotes,
         downvotes = downvotes,
@@ -915,7 +1367,7 @@ end
 
 local function parseLibrary(html)
     local songs = {}
-    for row in tostring(html or ""):gmatch("<tr>(.-)</tr>") do
+    for _, row in ipairs(htmlFind(htmlParse(html), "tr")) do
         local song = parseSongRow(row)
         if song ~= nil then
             table.insert(songs, song)
@@ -924,38 +1376,80 @@ local function parseLibrary(html)
     return songs
 end
 
-local function parseApiSongObject(objectText)
-    local id = jsonNumberAny(objectText, { "Id", "id" })
+local function parseApiSongObject(payload)
+    if type(payload) ~= "table" then return nil end
+    local id = payload.Id or payload.id
     if id == nil then
         return nil
     end
 
-    local author = jsonStringAny(objectText, { "Author", "author" })
-    local ragnabeat = jsonStringAny(objectText, { "Ragnabeat", "ragnabeat" })
+    local author = payload.Author or payload.author
+    if type(author) == "table" then
+        author = author.fullname or author.name or author.Name
+    end
+    local mapper = payload.Mapper or payload.mapper
+    if type(mapper) == "table" then
+        mapper = mapper.fullname or mapper.name or mapper.Name
+    end
+    local ragnabeat = payload.Ragnabeat or payload.ragnabeat
+    local isRanked = payload.IsRanked
+    if isRanked == nil then isRanked = payload.isRanked end
+    local cover = payload.CoverUrl or payload.coverUrl or payload.cover
+    local preview = payload.PreviewUrl or payload.previewUrl
+    local difficulties = splitDifficulties(payload.Difficulties or payload.difficulties)
+    if #difficulties == 0 and type(payload.levels) == "table" then
+        for _, level in ipairs(payload.levels) do
+            if type(level) == "table" and level.rank ~= nil then
+                table.insert(difficulties, tonumber(level.rank) or level.rank)
+            end
+        end
+    end
+    local genres = {}
+    if type(payload.genres) == "table" then
+        for _, genre in ipairs(payload.genres) do
+            if type(genre) == "string" and genre ~= "" then
+                table.insert(genres, genre)
+            elseif type(genre) == "table" then
+                local name = genre.name or genre.text or genre.Name
+                if name ~= nil and tostring(name) ~= "" then table.insert(genres, tostring(name)) end
+            end
+        end
+    end
     return {
         id = id,
-        title = jsonStringAny(objectText, { "Name", "name" }) or "",
+        title = payload.Name or payload.name or payload.fullname or "",
         artists = splitCsv(author),
         author = author,
-        mapper = jsonStringAny(objectText, { "Mapper", "mapper" }) or "",
-        difficulties = splitDifficulties(jsonStringAny(objectText, { "Difficulties", "difficulties" })),
-        hash = jsonStringAny(objectText, { "Hash", "hash" }),
-        isRanked = jsonBooleanAny(objectText, { "IsRanked", "isRanked", "is_ranked" }),
+        mapper = mapper or "",
+        difficulties = difficulties,
+        hash = payload.Hash or payload.hash,
+        isRanked = isRanked,
         ragnabeat = ragnabeat,
         infoDatUrl = ragnabeat and joinUrl(state.config.baseUrl, ragnabeat) or nil,
         oneClickUrl = "ragnac://install/" .. tostring(id),
-        zipUrl = joinUrl(state.config.apiBaseUrl, "/songs/download/" .. tostring(id)),
+        zipUrl = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id)),
         apiDetailUrl = joinUrl(state.config.apiBaseUrl, "/api/song/" .. tostring(id)),
-        apiDownloadUrl = joinUrl(state.config.apiBaseUrl, "/songs/download/" .. tostring(id)),
-        coverImageExtension = jsonStringAny(objectText, { "CoverImageExtension", "coverImageExtension", "cover_image_extension" }),
+        apiDownloadUrl = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id)),
+        coverImageExtension = payload.CoverImageExtension,
+        coverUrl = cover and joinUrl(state.config.baseUrl, cover) or nil,
+        previewUrl = preview and joinUrl(state.config.baseUrl, preview) or nil,
+        description = payload.description == JSON_NULL and nil or payload.description,
+        genres = genres,
         twitchCode = "!rc " .. tostring(id),
     }
 end
 
 local function parseApiSongs(json)
+    local payload = decodeJson(json)
     local songs = {}
-    for objectText in tostring(json or ""):gmatch("{[^{}]-}") do
-        local song = parseApiSongObject(objectText)
+    if type(payload) ~= "table" then return songs end
+    local items = payload.Results or payload.results or payload.songs or payload
+    if payload.Id ~= nil or payload.id ~= nil then
+        items = { payload }
+    end
+    if type(items) ~= "table" then return songs end
+    for _, item in ipairs(items) do
+        local song = parseApiSongObject(item)
         if song ~= nil then
             table.insert(songs, song)
         end
@@ -963,12 +1457,109 @@ local function parseApiSongs(json)
     return songs
 end
 
-local function fetchApiSongs(path)
-    local json, err = httpGet(joinUrl(state.config.apiBaseUrl, path))
-    if err then
-        return nil, err
+local function parseAccount(body)
+    local payload = decodeJson(body)
+    if type(payload) ~= "table" then
+        return nil, { code = "invalid_response", message = "account response is not a JSON object" }
     end
-    return parseApiSongs(json)
+    local account = {
+        username = payload.username,
+        isPremium = payload.isPremium,
+        premiumUntil = payload.premiumUntil == JSON_NULL and nil or payload.premiumUntil,
+    }
+    if account.username == nil and account.isPremium == nil and account.premiumUntil == nil then
+        return nil, { code = "invalid_response", message = "account response has no recognized fields" }
+    end
+    return account, nil
+end
+
+local function parsePlaylistSummary(payload)
+    if type(payload) ~= "table" then return nil end
+    local id, name = payload.id, payload.name
+    if id == nil or name == nil then
+        return nil
+    end
+    return {
+        id = id,
+        name = name,
+        description = payload.description == JSON_NULL and nil or payload.description,
+        owner = payload.owner == JSON_NULL and nil or payload.owner,
+        songCount = payload.songCount == JSON_NULL and nil or payload.songCount,
+        isPublic = payload.isPublic == JSON_NULL and nil or payload.isPublic,
+    }
+end
+
+local function parsePlaylistSearch(body)
+    local payload = decodeJson(body)
+    if type(payload) ~= "table" then
+        return nil, { code = "invalid_response", message = "playlist search response is not a JSON object" }
+    end
+    local result = {
+        page = payload.page == JSON_NULL and nil or payload.page,
+        pageSize = payload.pageSize == JSON_NULL and nil or payload.pageSize,
+        total = payload.total == JSON_NULL and nil or payload.total,
+        results = {},
+    }
+    for _, item in ipairs(payload.results or {}) do
+        local playlist = parsePlaylistSummary(item)
+        if playlist ~= nil then
+            table.insert(result.results, playlist)
+        end
+    end
+    if result.page == nil and result.pageSize == nil and result.total == nil and #result.results == 0 then
+        return nil, { code = "invalid_response", message = "playlist search response has no recognized fields" }
+    end
+    return result, nil
+end
+
+local function parsePlaylistDetail(body)
+    local payload = decodeJson(body)
+    if type(payload) ~= "table" then
+        return nil, { code = "invalid_response", message = "playlist response is not a JSON object" }
+    end
+    local playlist = parsePlaylistSummary(payload) or {
+        id = payload.id,
+        name = payload.name,
+        description = payload.description,
+        owner = payload.owner,
+        songCount = payload.songCount,
+        isPublic = payload.isPublic,
+    }
+    playlist.songs = {}
+    for _, rawSong in ipairs(payload.songs or {}) do
+        local song = parseApiSongObject(rawSong)
+        if song ~= nil then
+            table.insert(playlist.songs, song)
+        end
+    end
+    if playlist.id == nil and playlist.name == nil then
+        return nil, { code = "invalid_response", message = "playlist response has no recognized fields" }
+    end
+    return playlist, nil
+end
+
+local function fetchApiSongs(path, callback)
+    return apiRequest("GET", path, nil, function(response, err)
+        if err ~= nil then
+            if type(callback) == "function" then
+                return callback(nil, err)
+            end
+            return nil, err
+        end
+        local status = tonumber(response and response.status) or 0
+        if status < 200 or status >= 300 then
+            local responseError = { code = "http_error", message = "API returned HTTP " .. tostring(status) }
+            if type(callback) == "function" then
+                return callback(nil, responseError)
+            end
+            return nil, responseError
+        end
+        local songs = parseApiSongs(response.body)
+        if type(callback) == "function" then
+            return callback(songs, nil)
+        end
+        return songs
+    end)
 end
 
 local function appendSongs(target, source)
@@ -1040,52 +1631,73 @@ local function mergeSong(base, detail)
 end
 
 local function parseDuration(text)
-    local minutes, seconds = tostring(text or ""):match("(%d+):(%d+)")
-    if minutes == nil then
-        return nil
-    end
-    return tonumber(minutes) * 60 + tonumber(seconds)
+    local source = tostring(text or "")
+    local separator = source:find(":", 1, true)
+    if separator == nil then return nil end
+    local minutes, seconds = tonumber(source:sub(1, separator - 1)), tonumber(source:sub(separator + 1))
+    return minutes and seconds and minutes * 60 + seconds or nil
 end
 
 local function parseSongDetail(html, seed)
-    local source = tostring(html or "")
-    local id = tonumber(source:match("ragnac://install/(%d+)") or source:match("/songs/ddl/(%d+)") or (seed and seed.id))
+    local document = htmlParse(html)
+    local id = seed and seed.id
     local detail = {
         id = id,
     }
 
-    detail.title = stripTags(source:match("<h1[^>]->(.-)</h1>") or "")
-    local artistBlock = source:match("<h2[^>]->%s*(.-)%s*</h2>") or ""
-    detail.artists = listFromAnchors(artistBlock)
-    detail.mapper = stripTags(source:match('<div class="label">Mapped by</div>%s*<div class="mapper">(.-)</div>') or "")
-    detail.description = stripTags(source:match('<div class="label">Description</div>%s*<div class="description">(.-)</div>') or "")
-    detail.coverUrl = joinUrl(state.config.baseUrl, source:match('src="([^"]-/covers/%d+%.webp[^"]*)"') or source:match('src="(/covers/%d+%.webp[^"]*)"') or "")
+    local function first(tag, className)
+        return htmlFind(document, tag, className)[1]
+    end
+    local titleNode, artistNode = first("h1"), first("h2")
+    detail.title = titleNode and htmlText(titleNode) or ""
+    detail.artists = {}
+    if artistNode then
+        for _, anchor in ipairs(htmlFind(artistNode, "a")) do table.insert(detail.artists, htmlText(anchor)) end
+    end
+    local mapperNode, descriptionNode = first("div", "mapper"), first("div", "description")
+    detail.mapper = mapperNode and htmlText(mapperNode) or ""
+    detail.description = descriptionNode and htmlText(descriptionNode) or ""
+    local imageNode = first("img")
+    detail.coverUrl = joinUrl(state.config.baseUrl, imageNode and (imageNode.attrs.src or "") or "")
     if detail.coverUrl == state.config.baseUrl .. "/" then
         detail.coverUrl = nil
     end
     detail.zipUrl = id and joinUrl(state.config.baseUrl, "/songs/ddl/" .. tostring(id)) or nil
     detail.oneClickUrl = id and ("ragnac://install/" .. tostring(id)) or nil
     detail.twitchCode = id and ("!rc " .. tostring(id)) or nil
-    detail.durationSeconds = parseDuration(source:match('<i class="fas fa%-clock"></i>%s*([%d:]+)'))
-    detail.bpm = tonumber(source:match('<i class="fas fa%-drum"></i>%s*(%d+)'))
-    detail.infoDatUrl = joinUrl(state.config.baseUrl, source:match('data%-file="([^"]+)"') or "")
+    local clockNode, drumNode = first("i", "fa-clock"), first("i", "fa-drum")
+    detail.durationSeconds = parseDuration(clockNode and htmlText(clockNode.parent or clockNode) or "")
+    detail.bpm = tonumber(drumNode and htmlText(drumNode.parent or drumNode) or "")
+    local infoNode = first("a", nil)
+    detail.infoDatUrl = joinUrl(state.config.baseUrl, infoNode and (infoNode.attrs["data-file"] or "") or "")
     if detail.infoDatUrl == state.config.baseUrl .. "/" then
         detail.infoDatUrl = nil
     end
     detail.previewUrl = id and joinUrl(state.config.baseUrl, "/song/partial/preview/" .. tostring(id)) or nil
 
-    local levelBlock = source:match('<div class="level%-list">(.-)</div>') or ""
-    detail.difficulties = parseLevels(levelBlock)
+    local levelBlock = first("div", "level-list")
+    detail.difficulties = {}
+    if levelBlock then
+        for _, span in ipairs(htmlFind(levelBlock, "span")) do table.insert(detail.difficulties, tonumber(htmlText(span))) end
+    end
 
     local genres = {}
-    for genre in source:gmatch('href="https://ragnacustoms%.com/song%-library%?search=genre:[^"]+">(.-)</a>') do
-        table.insert(genres, stripTags(genre))
+    for _, anchor in ipairs(htmlFind(document, "a")) do
+        local href = anchor.attrs.href or ""
+        if href:find("song-library?search=genre:", 1, true) ~= nil then table.insert(genres, htmlText(anchor)) end
     end
     detail.genres = genres
 
-    local upvotes, downvotes = parseVotes(source:match('<div class="up_down_vote".-</div>') or "")
-    detail.upvotes = upvotes
-    detail.downvotes = downvotes
+    local voteNode = first("div", "up_down_vote")
+    detail.upvotes, detail.downvotes = 0, 0
+    if voteNode then
+        local numbers = {}
+        for _, child in ipairs(htmlFind(voteNode, "i")) do
+            local value = tonumber(htmlText(child))
+            if value then table.insert(numbers, value) end
+        end
+        detail.upvotes, detail.downvotes = numbers[1] or 0, numbers[2] or 0
+    end
 
     return mergeSong(seed or {}, detail)
 end
@@ -1138,55 +1750,6 @@ local function recordInstalledMetadata(targetDir, songOrId)
     end
 end
 
-local function scoreEndpointFromRuntime()
-    if type(FindFirstOf) ~= "function" then
-        return nil
-    end
-    for _, className in ipairs({ "RagnarockGameInstance", "BP_RagnarockGameInstance_C", "GameInstance" }) do
-        local instance = safeObjectCall(function()
-            return FindFirstOf(className)
-        end, nil)
-        if instance ~= nil then
-            local urls = safeObjectCall(function()
-                return instance:GetCustomApiURLs()
-            end, nil)
-            if type(urls) == "table" then
-                for _, value in pairs(urls) do
-                    local endpoint = tostring(unwrapRemoteValue(value) or "")
-                    if deriveVoteEndpoint(endpoint) ~= nil then
-                        return endpoint
-                    end
-                end
-            end
-        end
-    end
-    return nil
-end
-
-local function scoreEndpointFromConfig()
-    local candidates = {}
-    if state.config.gameConfigPath ~= nil and state.config.gameConfigPath ~= "" then
-        table.insert(candidates, state.config.gameConfigPath)
-    end
-    if os ~= nil and type(os.getenv) == "function" then
-        local localAppData = os.getenv("LOCALAPPDATA")
-        if localAppData ~= nil and localAppData ~= "" then
-            table.insert(candidates, joinPath(localAppData, "Ragnarock/Saved/Config/WindowsNoEditor/Game.ini"))
-        end
-    end
-    for _, path in ipairs(candidates) do
-        local content = readTextFile(path)
-        if content ~= nil then
-            for endpoint in tostring(content):gmatch('CustomApiURLs%s*=%s*"([^"]+)"') do
-                if deriveVoteEndpoint(endpoint) ~= nil then
-                    return endpoint
-                end
-            end
-        end
-    end
-    return nil
-end
-
 function Api.configure(options)
     for key, value in pairs(options or {}) do
         state.config[key] = value
@@ -1205,18 +1768,6 @@ function Api.getConfig()
     return copy
 end
 
-local function discoverWanApiScoreEndpoint()
-    if state.config.useWanApi ~= true then
-        return setError("WanApi voting is opt-in; configure useWanApi=true")
-    end
-    local endpoint = scoreEndpointFromRuntime() or scoreEndpointFromConfig()
-    if endpoint == nil then
-        return setError("configured custom leaderboard score endpoint was not found")
-    end
-    emit("vote.endpoint.discovered", { endpoint = redactEndpoint(endpoint) })
-    return endpoint
-end
-
 function Api.setRuntimePaths(paths)
     paths = paths or {}
     for _, key in ipairs({ "scriptPath", "scriptDir", "win64Dir", "gameDir" }) do
@@ -1225,12 +1776,27 @@ function Api.setRuntimePaths(paths)
         end
     end
 
-    if (state.config.songFolder == nil or state.config.songFolder == "") and state.config.gameDir ~= nil then
-        state.config.songFolder = joinPath(state.config.gameDir, "CustomSongs")
-    end
-
     emit("runtime.paths", Api.getRuntimePaths())
     return Api.getRuntimePaths()
+end
+
+-- Explicitly adopt Ragnarock's configured custom API endpoint. This is opt-in
+-- so merely loading the library never reads or forwards game credentials.
+function Api.configureFromGameCustomApiUrls(options)
+    options = options or {}
+    local urls, readError = readGameConfigCustomApiUrls()
+    if urls ~= nil then
+        for _, value in ipairs(urls) do
+            local origin, key = customApiEndpointParts(value)
+            if origin ~= nil and key ~= nil then
+                local configured = adoptCustomApiEndpoint(value, options)
+                print("[RagnaCustomsApi] configured API from Game.ini path=" .. tostring(state.config.gameConfigPath)
+                    .. " base=" .. tostring(configured.apiBaseUrl) .. "\n")
+                return configured
+            end
+        end
+    end
+    return nil, readError or { code = "custom_api_url_missing", message = "No configured /wanapi/score/{apiKey} endpoint was found" }
 end
 
 function Api.getRuntimePaths()
@@ -1246,9 +1812,6 @@ end
 function Api.resolveSongFolder()
     if state.config.songFolder ~= nil and state.config.songFolder ~= "" then
         return state.config.songFolder
-    end
-    if state.config.gameDir ~= nil and state.config.gameDir ~= "" then
-        return joinPath(state.config.gameDir, "CustomSongs")
     end
     return nil
 end
@@ -1269,17 +1832,13 @@ function Api.getCapabilities()
     local hasUnzip = type(state.config.unzipFile) == "function" or hasShell
     local hasListFiles = type(state.config.listFiles) == "function" or hasShell
     local hasOpenUrl = type(state.config.openUrl) == "function"
-    local scoreEndpoint = nil
-    if state.config.useWanApi == true then
-        scoreEndpoint = scoreEndpointFromRuntime() or scoreEndpointFromConfig()
-    end
-    local canWanApiVote = scoreEndpoint ~= nil and deriveVoteEndpoint(scoreEndpoint) ~= nil and hasHttpRequest
-    local canAuthenticatedVote = type(state.config.httpPost) == "function"
+    local hasApiKey = state.config.apiKey ~= nil and state.config.apiKey ~= ""
 
     return {
         version = Api.VERSION,
         baseUrl = state.config.baseUrl,
         apiBaseUrl = state.config.apiBaseUrl,
+        transport = state.config.transport,
         preferApi = state.config.preferApi,
         songFolder = songFolder,
         shellAllowed = hasShell,
@@ -1295,21 +1854,19 @@ function Api.getCapabilities()
             readFile = type(state.config.readFile) == "function",
             writeFile = type(state.config.writeFile) == "function",
         },
-        canFetch = hasHttpGet,
-        canSearch = hasHttpGet,
-        canPreload = hasHttpGet,
+        canFetch = state.config.transport == "varest" and hasHttpRequest or hasHttpGet,
+        canSearch = state.config.transport == "varest" and hasHttpRequest or hasHttpGet,
+        canPreload = state.config.transport == "varest" and hasHttpRequest or hasHttpGet,
         canOpenOneClick = hasOpenUrl,
         canReturnOneClick = true,
         canDownloadZip = hasSongFolder and hasDownload,
         canExtractZip = hasSongFolder and hasDownload and hasUnzip,
         canScanInstalled = hasSongFolder and hasListFiles,
         canWriteInstallMetadata = hasSongFolder and (type(state.config.writeFile) == "function" or io ~= nil),
-        canVote = canAuthenticatedVote or canWanApiVote,
-        voteConfigured = canAuthenticatedVote or canWanApiVote,
-        canAuthenticatedVote = canAuthenticatedVote,
-        canWanApiVote = canWanApiVote,
-        scoreEndpoint = scoreEndpoint and redactEndpoint(scoreEndpoint) or nil,
-        voteMode = state.config.useWanApi == true and "wanapi" or "authenticated",
+        canAsyncFetch = hasHttpRequest,
+        canVote = hasApiKey and (state.config.transport == "varest" and hasHttpRequest or hasHttpPost),
+        voteConfigured = hasApiKey and (state.config.transport == "varest" and hasHttpRequest or hasHttpPost),
+        apiKeyConfigured = hasApiKey,
     }
 end
 
@@ -1368,8 +1925,8 @@ function Api.urlsFor(songOrId)
     end
     return {
         oneClick = "ragnac://install/" .. tostring(id),
-        zip = joinUrl(state.config.apiBaseUrl, "/songs/download/" .. tostring(id)),
-        apiDownload = joinUrl(state.config.apiBaseUrl, "/songs/download/" .. tostring(id)),
+        zip = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id)),
+        apiDownload = joinUrl(state.config.downloadBaseUrl, "/songs/download/" .. tostring(id)),
         apiDetail = joinUrl(state.config.apiBaseUrl, "/api/song/" .. tostring(id)),
         webZip = joinUrl(state.config.baseUrl, "/songs/ddl/" .. tostring(id)),
         preview = joinUrl(state.config.baseUrl, "/song/partial/preview/" .. tostring(id)),
@@ -1394,26 +1951,11 @@ function Api.preloadSongs(options)
     if pageCount < 1 then
         pageCount = 1
     end
-    local songs = nil
-    if state.config.preferApi then
-        local apiSongs, apiErr = fetchApiSongs("/api/song/check-updates")
-        if apiSongs ~= nil and #apiSongs > 0 then
-            songs = apiSongs
-        elseif apiErr ~= nil then
-            state.lastError = apiErr
-        end
-    end
-
-    if songs == nil then
-        songs = {}
+    local function loadWebSongs()
+        local songs = {}
         for page = 1, pageCount do
             local pageSongs, err = fetchLibraryPage(nil, page)
             if err then
-                state.status.loading = false
-                emit("preload.failed", {
-                    error = err,
-                    status = Api.getStatus(),
-                })
                 return nil, err
             end
             if #pageSongs == 0 then
@@ -1421,19 +1963,39 @@ function Api.preloadSongs(options)
             end
             appendSongs(songs, pageSongs)
         end
+        return songs
     end
-    state.cache.songs = songs
-    state.cache.songsAt = now()
-    state.status.ready = true
-    state.status.loading = false
-    state.status.lastRefreshAt = state.cache.songsAt
-    rememberSongs(songs)
-    emit("preload.completed", {
-        songs = songs,
-        status = Api.getStatus(),
-    })
-    emit("ready", Api.getStatus())
-    return songs
+
+    local function finishPreload(songs, err)
+        state.status.loading = false
+        if err ~= nil then
+            state.lastError = err.message or err
+            emit("preload.failed", { error = err, status = Api.getStatus() })
+            return nil, err
+        end
+        state.cache.songs = songs or {}
+        state.cache.songsAt = now()
+        state.status.ready = true
+        state.status.lastRefreshAt = state.cache.songsAt
+        rememberSongs(state.cache.songs)
+        emit("preload.completed", { songs = state.cache.songs, status = Api.getStatus() })
+        emit("ready", Api.getStatus())
+        return state.cache.songs
+    end
+
+    if state.config.preferApi then
+        return fetchApiSongs("/api/song/check-updates", function(songs, err)
+            if (err ~= nil or songs == nil or #songs == 0) and not usesVaRest() then
+                songs, err = loadWebSongs()
+            end
+            return finishPreload(songs, err)
+        end)
+    end
+    if usesVaRest() then
+        return finishPreload(nil, { code = "transport_configuration", message = "VaRest transport requires preferApi=true" })
+    end
+    local songs, err = loadWebSongs()
+    return finishPreload(songs, err)
 end
 
 function Api.refreshSongs()
@@ -1444,36 +2006,296 @@ function Api.preloadAllSongs(maxPages)
     return Api.preloadSongs({ force = true, pages = maxPages or 9999 })
 end
 
-function Api.checkUpdates()
-    local songs, err = fetchApiSongs("/api/song/check-updates")
-    if err then
-        return nil, err
-    end
-    rememberSongs(songs)
-    emit("updates.completed", {
-        songs = songs,
-    })
-    return songs
+function Api.checkUpdates(options)
+    options = options or {}
+    return fetchApiSongs("/api/song/check-updates", function(songs, err)
+        if err ~= nil then
+            emit("updates.failed", { error = err })
+            if type(options.callback) == "function" then
+                return options.callback(nil, err)
+            end
+            return nil, err
+        end
+        rememberSongs(songs)
+        emit("updates.completed", { songs = songs })
+        if type(options.callback) == "function" then
+            return options.callback(songs, nil)
+        end
+        return songs
+    end)
 end
 
-function Api.getSongList(listId)
+function Api.getSongList(listId, options)
+    options = options or {}
     if listId == nil or tostring(listId) == "" then
         return setError("song list id is required")
     end
-    local songs, err = fetchApiSongs("/api/song-list/" .. urlEncode(listId))
-    if err then
-        emit("songlist.failed", {
-            id = listId,
-            error = err,
-        })
-        return nil, err
+    return fetchApiSongs("/api/song-list/" .. urlEncode(listId), function(songs, err)
+        if err ~= nil then
+            emit("songlist.failed", { id = listId, error = err })
+            if type(options.callback) == "function" then
+                return options.callback(nil, err)
+            end
+            return nil, err
+        end
+        rememberSongs(songs)
+        emit("songlist.completed", { id = listId, songs = songs })
+        if type(options.callback) == "function" then
+            return options.callback(songs, nil)
+        end
+        return songs
+    end)
+end
+
+function Api.getLastPlayed(results, options)
+    options = options or {}
+    results = tonumber(results) or 10
+    return fetchApiSongs("/api/songs/last-played/" .. tostring(results), function(songs, err)
+        emit(err and "catalog.failed" or "catalog.completed", { endpoint = "last-played", songs = songs, error = err })
+        if type(options.callback) == "function" then
+            return options.callback(songs, err)
+        end
+        return songs, err
+    end)
+end
+
+function Api.getLastUploaded(results, options)
+    options = options or {}
+    results = tonumber(results) or 10
+    return fetchApiSongs("/api/songs/last-uploaded/" .. tostring(results), function(songs, err)
+        emit(err and "catalog.failed" or "catalog.completed", { endpoint = "last-uploaded", songs = songs, error = err })
+        if type(options.callback) == "function" then
+            return options.callback(songs, err)
+        end
+        return songs, err
+    end)
+end
+
+function Api.getTopRated(results, days, options)
+    options = options or {}
+    results = tonumber(results) or 10
+    days = tonumber(days) or 30
+    return fetchApiSongs("/api/songs/top-rated/" .. tostring(results) .. "/" .. tostring(days), function(songs, err)
+        emit(err and "catalog.failed" or "catalog.completed", { endpoint = "top-rated", songs = songs, error = err })
+        if type(options.callback) == "function" then
+            return options.callback(songs, err)
+        end
+        return songs, err
+    end)
+end
+
+function Api.getAccount(options)
+    options = options or {}
+    return apiRequest("GET", "/api/account/me", nil, function(response, err)
+        if err ~= nil then
+            if type(options.callback) == "function" then options.callback(nil, err) end
+            return nil, err
+        end
+        local account, parseError = parseAccount(response.body)
+        if parseError ~= nil then
+            emit("account.failed", { error = parseError })
+            if type(options.callback) == "function" then options.callback(nil, parseError) end
+            return nil, parseError
+        end
+        emit("account.completed", { account = account })
+        if type(options.callback) == "function" then options.callback(account, nil) end
+        return account
+    end)
+end
+
+function Api.searchPlaylists(query, page, pageSize, options)
+    options = options or {}
+    if type(page) == "table" then
+        options = page
+        page = nil
+        pageSize = nil
+    elseif type(pageSize) == "table" then
+        options = pageSize
+        pageSize = nil
     end
-    rememberSongs(songs)
-    emit("songlist.completed", {
-        id = listId,
-        songs = songs,
-    })
-    return songs
+    local path = "/api/playlist/search?q=" .. urlEncode(query or "")
+        .. "&page=" .. urlEncode(page or 1)
+        .. "&pageSize=" .. urlEncode(pageSize or 20)
+    return apiRequest("GET", path, nil, function(response, err)
+        if err ~= nil then
+            if type(options.callback) == "function" then options.callback(nil, err) end
+            return nil, err
+        end
+        local playlists, parseError = parsePlaylistSearch(response.body)
+        if parseError ~= nil then
+            emit("playlists.failed", { query = query or "", error = parseError })
+            if type(options.callback) == "function" then options.callback(nil, parseError) end
+            return nil, parseError
+        end
+        emit("playlists.completed", { query = query or "", result = playlists })
+        if type(options.callback) == "function" then options.callback(playlists, nil) end
+        return playlists
+    end)
+end
+
+function Api.getPlaylist(playlistId, options)
+    options = options or {}
+    if playlistId == nil or trim(playlistId) == "" then
+        return setError("playlist id is required")
+    end
+    return apiRequest("GET", "/api/playlist/" .. urlEncode(playlistId), nil, function(response, err)
+        if err ~= nil then
+            if type(options.callback) == "function" then options.callback(nil, err) end
+            return nil, err
+        end
+        local playlist, parseError = parsePlaylistDetail(response.body)
+        if parseError ~= nil then
+            emit("playlist.failed", { id = playlistId, error = parseError })
+            if type(options.callback) == "function" then options.callback(nil, parseError) end
+            return nil, parseError
+        end
+        emit("playlist.completed", { id = playlistId, playlist = playlist })
+        if type(options.callback) == "function" then options.callback(playlist, nil) end
+        return playlist
+    end)
+end
+
+local function parseApiStringCollection(json, keys)
+    local payload = decodeJson(json)
+    local values, seen = {}, {}
+    local function add(value)
+        if type(value) == "string" and value ~= "" and not seen[value] then
+            seen[value] = true
+            table.insert(values, value)
+        end
+    end
+    local function visit(value)
+        if type(value) ~= "table" then
+            add(value)
+            return
+        end
+        for _, key in ipairs(keys) do
+            add(value[key])
+        end
+        for _, child in pairs(value) do
+            if type(child) == "table" then visit(child) end
+        end
+    end
+    visit(payload)
+    return values
+end
+
+function Api.searchCategories(query)
+    local path = "/api/song-categories?q=" .. urlEncode(query or "")
+    return apiRequest("GET", path, nil, function(response, err)
+        if err ~= nil then
+            emit("categories.failed", { query = query or "", error = err })
+            return nil, err
+        end
+        local values = parseApiStringCollection(response.body, { "name", "Name", "category", "Category", "text", "Text", "label", "Label" })
+        emit("categories.completed", { query = query or "", values = values })
+        return values
+    end)
+end
+
+function Api.searchMappers(query)
+    local path = "/api/mapper?q=" .. urlEncode(query or "")
+    return apiRequest("GET", path, nil, function(response, err)
+        if err ~= nil then
+            emit("mappers.failed", { query = query or "", error = err })
+            return nil, err
+        end
+        local values = parseApiStringCollection(response.body, { "name", "Name", "mapper", "Mapper", "text", "Text", "label", "Label" })
+        emit("mappers.completed", { query = query or "", values = values })
+        return values
+    end)
+end
+
+local function parseVoteState(body)
+    local payload = decodeJson(body)
+    if type(payload) ~= "table" then
+        return nil, { code = "invalid_response", message = "vote response is not a JSON object" }
+    end
+    local votes = payload.votes
+    if type(votes) ~= "table" then
+        return nil, { code = "invalid_response", message = "vote response is missing votes" }
+    end
+    local upvotes, downvotes = votes.up, votes.down
+    local currentVote = votes.mine
+    if upvotes == nil or downvotes == nil then
+        return nil, { code = "invalid_response", message = "vote response is missing counts" }
+    end
+    if currentVote == JSON_NULL then currentVote = nil end
+    if currentVote ~= nil and currentVote ~= "up" and currentVote ~= "down" then
+        return nil, { code = "invalid_response", message = "vote response contains an invalid selection" }
+    end
+    local state = {
+        id = payload.songId,
+        currentVote = currentVote,
+        upvotes = upvotes,
+        downvotes = downvotes,
+    }
+    local rating = payload.rating
+    if type(rating) == "table" then
+        state.rating = {
+            average = rating.average,
+            count = rating.count,
+        }
+    end
+    if type(payload.review) == "table" then
+        local review = payload.review
+        state.review = {
+            funFactor = review.funFactor,
+            rhythm = review.rhythm,
+            patternQuality = review.patternQuality,
+            readability = review.readability,
+            flow = review.flow,
+            levelQuality = review.levelQuality,
+            feedback = review.feedback == JSON_NULL and nil or review.feedback,
+        }
+    end
+    return state, nil
+end
+
+function Api.getSongVote(songOrId)
+    local id = type(songOrId) == "table" and songOrId.id or songOrId
+    if id == nil or trim(id) == "" then return setError("missing song id") end
+    return apiRequest("GET", "/api/song/" .. urlEncode(id) .. "/vote", nil, function(response, err)
+        if err ~= nil then
+            emit("vote.details.failed", { id = id, error = err })
+            return nil, err
+        end
+        local state, parseError = parseVoteState(response.body)
+        if parseError ~= nil then
+            emit("vote.details.failed", { id = id, error = parseError })
+            return nil, parseError
+        end
+        emit("vote.details.completed", { id = id, response = state })
+        return state
+    end)
+end
+
+function Api.reviewSong(songOrId, review)
+    local id = type(songOrId) == "table" and songOrId.id or songOrId
+    if id == nil or trim(id) == "" then return setError("missing song id") end
+    review = review or {}
+    local fields, encoded = { "funFactor", "rhythm", "patternQuality", "readability", "flow", "levelQuality", "feedback" }, {}
+    for _, field in ipairs(fields) do
+        if review[field] ~= nil then
+            local value = review[field]
+            table.insert(encoded, jsonEscape(field) .. ":" .. (type(value) == "number" and tostring(value) or jsonEscape(value)))
+        end
+    end
+    local path = "/api/song/" .. urlEncode(id) .. "/review"
+    local body = "{" .. table.concat(encoded, ",") .. "}"
+    return apiRequest("POST", path, body, function(response, err)
+        if err ~= nil then
+            emit("review.failed", { id = id, error = err })
+            return nil, err
+        end
+        local state, parseError = parseVoteState(response.body)
+        if parseError ~= nil then
+            emit("review.failed", { id = id, error = parseError })
+            return nil, parseError
+        end
+        emit("review.completed", { id = id, response = state })
+        return state
+    end)
 end
 
 function Api.search(query, options)
@@ -1483,13 +2305,28 @@ function Api.search(query, options)
         query = query or "",
         page = page,
     })
-    local songs, err = nil, nil
+    if usesVaRest() and (not state.config.preferApi or options.html) then
+        return setError("VaRest transport requires preferApi=true and API search")
+    end
+
     if state.config.preferApi and not options.html then
-        songs, err = fetchApiSongs("/api/search/" .. urlEncode(query or ""))
+        return fetchApiSongs("/api/search/" .. urlEncode(query or ""), function(songs, err)
+            if err ~= nil and not usesVaRest() then
+                songs, err = fetchLibraryPage(query or "", page)
+            end
+            if err ~= nil then
+                emit("search.failed", { query = query or "", page = page, error = err })
+                if type(options._onResult) == "function" then options._onResult(nil, err) end
+                return nil, err
+            end
+            rememberSongs(songs)
+            emit("search.completed", { query = query or "", page = page, songs = songs })
+            if type(options._onResult) == "function" then options._onResult(songs, nil) end
+            return songs
+        end)
     end
-    if songs == nil then
-        songs, err = fetchLibraryPage(query or "", page)
-    end
+
+    local songs, err = fetchLibraryPage(query or "", page)
     if err then
         emit("search.failed", {
             query = query or "",
@@ -1613,6 +2450,19 @@ end
 
 function Api.searchUi(query, options)
     options = options or {}
+    if usesVaRest() and not options.cached then
+        return Api.search(query, {
+            page = options.page,
+            html = options.html,
+            _onResult = function(songs, err)
+                if err ~= nil then
+                    emit("search.ui.failed", { query = query or "", error = err })
+                    return
+                end
+                emit("search.ui.completed", { query = query or "", songs = Api.toUiSongs(songs, options) })
+            end,
+        })
+    end
     local songs, err
     if options.cached then
         songs = Api.searchCached(query)
@@ -1627,6 +2477,23 @@ end
 
 function Api.getSongUi(songOrId, options)
     options = options or {}
+    if usesVaRest() then
+        local result = Api.getSong(songOrId, {
+            refresh = options.refresh,
+            details = options.details,
+            _onResult = function(detail, err)
+                if err ~= nil then
+                    emit("song.ui.failed", { song = songOrId, error = err })
+                    return
+                end
+                emit("song.ui.completed", { song = Api.toUiSong(detail, options) })
+            end,
+        })
+        if type(result) == "table" then
+            emit("song.ui.completed", { song = Api.toUiSong(result, options) })
+        end
+        return result
+    end
     local detail, err = Api.getSong(songOrId, options)
     if err then
         return nil, err
@@ -1725,6 +2592,185 @@ function Api.getInstalledSong(songOrId, options)
     return nil
 end
 
+-- Read/write the catalog marker for one already-loaded custom-song folder.
+-- This intentionally does not scan CustomSongs: callers that know the loaded
+-- folder can use the marker without touching unrelated installations.
+function Api.readInstalledSongId(songFolder)
+    if songFolder == nil or trim(songFolder) == "" then
+        return nil, "songFolder is required"
+    end
+    local path = joinPath(songFolder, ".id")
+    local value, err = readTextFile(path)
+    if value == nil then
+        return nil, err
+    end
+    local trimmed = trim(value)
+    local digits = tostring(trimmed)
+    local valid = digits ~= ""
+    for index = 1, #digits do
+        local character = digits:sub(index, index)
+        if character < "0" or character > "9" then
+            valid = false
+            break
+        end
+    end
+    local id = valid and tonumber(digits) or nil
+    if id == nil or id <= 0 then
+        return nil, "invalid catalog id in " .. path
+    end
+    return math.floor(id), nil, path
+end
+
+function Api.writeInstalledSongId(songFolder, songId)
+    local id = tonumber(songId)
+    if songFolder == nil or trim(songFolder) == "" then
+        return nil, "songFolder is required"
+    end
+    if id == nil or id <= 0 then
+        return nil, "songId must be a positive number"
+    end
+    local path = joinPath(songFolder, ".id")
+    local result, err = writeTextFile(path, tostring(math.floor(id)) .. "\n")
+    if result == nil and err ~= nil then
+        return nil, err
+    end
+    emit("installed.id.written", { path = path, id = math.floor(id), songFolder = songFolder })
+    return math.floor(id), nil, path
+end
+
+local function normalizedCatalogText(value)
+    return trim(tostring(value or "")):lower():gsub("[%p%c]", " "):gsub("%s+", " ")
+end
+
+local function catalogValueMatches(value, candidates)
+    local needle = normalizedCatalogText(value)
+    if needle == "" then return true end
+    for _, candidate in ipairs(candidates or {}) do
+        local normalized = normalizedCatalogText(candidate)
+        if normalized ~= "" and (needle == normalized
+            or normalized:find(needle, 1, true)
+            or needle:find(normalized, 1, true)) then
+            return true
+        end
+    end
+    return false
+end
+
+local function catalogSongMatchesMetadata(song, metadata)
+    if type(song) ~= "table" or type(metadata) ~= "table" then return false end
+    if metadata.title == nil or not catalogValueMatches(metadata.title, { song.title, song.name }) then
+        return false
+    end
+    local artists = song.artists or splitCsv(song.author)
+    if metadata.artist ~= nil and metadata.artist ~= "" and not catalogValueMatches(metadata.artist, artists) then
+        return false
+    end
+    if metadata.mapper ~= nil and metadata.mapper ~= ""
+        and normalizedCatalogText(metadata.mapper) ~= normalizedCatalogText(song.mapper) then
+        return false
+    end
+    local requiredDifficulties = metadata.difficulties or {}
+    if #requiredDifficulties > 0 then
+        local available = song.difficulties or {}
+        for _, required in ipairs(requiredDifficulties) do
+            local found = false
+            for _, candidate in ipairs(available) do
+                if tonumber(required) ~= nil and tonumber(candidate) == tonumber(required) then
+                    found = true
+                    break
+                end
+            end
+            if not found then return false end
+        end
+    end
+    return true
+end
+
+function Api.discoverInstalledSongId(songFolder, metadata, options)
+    options = options or {}
+    if songFolder == nil or trim(songFolder) == "" then
+        return setError("songFolder is required")
+    end
+    if type(metadata) ~= "table" or trim(metadata.title) == "" then
+        return setError("song metadata with title is required")
+    end
+
+    local query = tostring(metadata.artist or "") .. " " .. tostring(metadata.title or "")
+    local completed = false
+    local function finish(id, err, result)
+        if completed then return end
+        completed = true
+        if type(options.callback) == "function" then
+            return options.callback(id, err, result)
+        end
+        return id, err, result
+    end
+    local function handleResults(songs, err)
+        if err ~= nil then
+            emit("installed.id.discovery.failed", { songFolder = songFolder, metadata = metadata, error = err })
+            return finish(nil, err)
+        end
+        local matches = {}
+        for _, song in ipairs(songs or {}) do
+            if catalogSongMatchesMetadata(song, metadata) then
+                table.insert(matches, song)
+            end
+        end
+        if #matches ~= 1 then
+            local discoveryError = {
+                code = "song_id_unresolved",
+                message = "catalog search did not uniquely resolve the loaded song",
+                matches = #matches,
+            }
+            emit("installed.id.discovery.failed", {
+                songFolder = songFolder,
+                metadata = metadata,
+                error = discoveryError,
+            })
+            return finish(nil, discoveryError)
+        end
+        local song = matches[1]
+        local id = tonumber(song.id)
+        local existingId = tonumber(options.existingId)
+        local status = existingId ~= nil and existingId == id and "validated"
+            or existingId ~= nil and "replaced"
+            or "resolved"
+        local writePath = joinPath(songFolder, ".id")
+        if status ~= "validated" then
+            local written, writeError
+            written, writeError, writePath = Api.writeInstalledSongId(songFolder, id)
+            if written == nil then
+                local discoveryError = { code = "marker_write_failed", message = writeError, path = writePath }
+                emit("installed.id.discovery.failed", {
+                    songFolder = songFolder,
+                    metadata = metadata,
+                    error = discoveryError,
+                })
+                return finish(nil, discoveryError)
+            end
+        end
+        local result = {
+            id = id,
+            previousId = existingId,
+            path = writePath,
+            song = song,
+            metadata = metadata,
+            status = status,
+        }
+        emit("installed.id.discovered", result)
+        return finish(id, nil, result)
+    end
+
+    local request = Api.search(query, {
+        page = options.page or 1,
+        _onResult = handleResults,
+    })
+    if type(request) == "table" and not completed then
+        handleResults(request, nil)
+    end
+    return request
+end
+
 function Api.isInstalled(songOrId, options)
     local song, err = Api.getInstalledSong(songOrId, options)
     if err then
@@ -1741,11 +2787,15 @@ function Api.compareInstalledWithUpdates(options)
     end
     local updates = options.updates
     if updates == nil then
-        local updateErr = nil
-        updates, updateErr = Api.checkUpdates()
-        if updateErr then
-            return nil, updateErr
-        end
+        return Api.checkUpdates({ callback = function(remote, updateErr)
+            if updateErr ~= nil then
+                emit("installed.compare.failed", { error = updateErr })
+                return nil, updateErr
+            end
+            local result = Api.compareInstalledWithUpdates({ updates = remote, songFolder = options.songFolder })
+            emit("installed.compare.completed", result)
+            return result
+        end })
     end
 
     local missing = {}
@@ -1801,50 +2851,65 @@ function Api.getSong(songOrId, options)
     if url == nil and seed.slug ~= nil then
         url = joinUrl(state.config.baseUrl, "/song/" .. seed.slug)
     end
-    if state.config.preferApi and not options.html and seed.id ~= nil then
+
+    local function loadHtmlDetail()
+        if url == nil then
+            return setError("song detail URL is unavailable for id " .. tostring(seed.id))
+        end
         emit("song.started", {
             song = seed,
-            url = joinUrl(state.config.apiBaseUrl, "/api/song/" .. tostring(seed.id)),
+            url = url,
         })
-        local apiSongs, apiErr = fetchApiSongs("/api/song/" .. tostring(seed.id))
-        if apiSongs ~= nil and apiSongs[1] ~= nil then
+        local html, err = httpGet(url)
+        if err then
+            emit("song.failed", {
+                song = seed,
+                url = url,
+                error = err,
+            })
+            return nil, err
+        end
+        local detail = parseSongDetail(html, seed)
+        if detail.id ~= nil then
+            state.cache.byId[tostring(detail.id)] = detail
+        end
+        if detail.slug ~= nil then
+            state.cache.bySlug[tostring(detail.slug)] = detail
+        end
+        emit("song.completed", {
+            song = detail,
+        })
+        return detail
+    end
+
+    if usesVaRest() and (not state.config.preferApi or options.html or seed.id == nil) then
+        return setError("VaRest transport requires API song details")
+    end
+    if state.config.preferApi and not options.html and seed.id ~= nil then
+        local detailPath = options.details and "/api/song/details/" or "/api/song/"
+        emit("song.started", {
+            song = seed,
+            url = joinUrl(state.config.apiBaseUrl, detailPath .. tostring(seed.id)),
+        })
+        return fetchApiSongs(detailPath .. tostring(seed.id), function(apiSongs, apiErr)
+            if apiErr ~= nil or apiSongs == nil or apiSongs[1] == nil then
+                local err = apiErr or { code = "invalid_response", message = "song detail response was empty" }
+                if not usesVaRest() then
+                    state.lastError = err
+                    return loadHtmlDetail()
+                end
+                emit("song.failed", { song = seed, error = err })
+                if type(options._onResult) == "function" then options._onResult(nil, err) end
+                return nil, err
+            end
             local detail = mergeSong(seed, apiSongs[1])
             state.cache.byId[tostring(detail.id)] = detail
-            emit("song.completed", {
-                song = detail,
-            })
+            emit("song.completed", { song = detail })
+            if type(options._onResult) == "function" then options._onResult(detail, nil) end
             return detail
-        elseif apiErr ~= nil then
-            state.lastError = apiErr
-        end
+        end)
     end
-    if url == nil then
-        return setError("song detail URL is unavailable for id " .. tostring(seed.id))
-    end
-    emit("song.started", {
-        song = seed,
-        url = url,
-    })
-    local html, err = httpGet(url)
-    if err then
-        emit("song.failed", {
-            song = seed,
-            url = url,
-            error = err,
-        })
-        return nil, err
-    end
-    local detail = parseSongDetail(html, seed)
-    if detail.id ~= nil then
-        state.cache.byId[tostring(detail.id)] = detail
-    end
-    if detail.slug ~= nil then
-        state.cache.bySlug[tostring(detail.slug)] = detail
-    end
-    emit("song.completed", {
-        song = detail,
-    })
-    return detail
+    return loadHtmlDetail()
 end
 
 function Api.openOneClick(songOrId)
@@ -1926,12 +2991,9 @@ function Api.downloadSong(songOrId, options)
 
     local zipPath = joinPath(targetDir, tostring(id) .. ".zip")
     local urls = Api.urlsFor(id)
-    if state.config.apiKey ~= nil and state.config.apiKey ~= "" then
-        urls.zip = joinUrl(state.config.apiBaseUrl, "/songs/download/" .. tostring(id) .. "/" .. tostring(state.config.apiKey))
-    end
     local downloaded, err
     if type(state.config.downloadFile) == "function" then
-        downloaded, err = state.config.downloadFile(urls.zip, zipPath, state.config)
+        downloaded, err = state.config.downloadFile(urls.zip, zipPath, state.config, requestHeaders())
     else
         downloaded, err = defaultDownloadFile(urls.zip, zipPath)
     end
@@ -1983,136 +3045,6 @@ function Api.downloadSong(songOrId, options)
     return result
 end
 
-local function completeVoteCallback(callback, payload)
-    if type(callback) == "function" then
-        safeCall(callback, payload)
-    end
-end
-
-local function resolveVoteScoreEndpoint(options)
-    options = options or {}
-    if options.useWanApi == true or state.config.useWanApi == true then
-        return discoverWanApiScoreEndpoint()
-    end
-    return nil, "WanApi voting is disabled; configure useWanApi=true"
-end
-
-local function performVoteRequest(method, beatmap, direction, callback, options)
-    options = options or {}
-    local cleanBeatmap = trim(beatmap)
-    if cleanBeatmap == "" then
-        return setError("beatmap hash is required")
-    end
-    if direction ~= nil and direction ~= "up" and direction ~= "down" then
-        return setError("vote direction must be 'up', 'down', or nil")
-    end
-
-    local scoreEndpoint, scoreEndpointError = resolveVoteScoreEndpoint(options)
-    if scoreEndpoint == nil then
-        return setError(scoreEndpointError or Api.lastError())
-    end
-    local voteEndpoint, endpointError = deriveVoteEndpoint(scoreEndpoint)
-    if voteEndpoint == nil then
-        return setError(endpointError)
-    end
-
-    state.requestSerial = state.requestSerial + 1
-    local generation = state.requestSerial
-    state.voteGenerations[cleanBeatmap] = generation
-    local url = voteEndpoint
-    local body = nil
-    if method == "GET" then
-        url = url .. "?beatmap=" .. urlEncode(cleanBeatmap)
-    else
-        body = '{"beatmap":"' .. jsonEscape(cleanBeatmap) .. '","direction":'
-            .. (direction == nil and "null" or ('"' .. direction .. '"')) .. "}"
-    end
-
-    emit("vote.started", {
-        beatmap = cleanBeatmap,
-        direction = direction,
-        generation = generation,
-    })
-    local transportId = httpRequest(method, url, body, function(response, transportError)
-        if state.voteGenerations[cleanBeatmap] ~= generation then
-            emit("vote.stale", { beatmap = cleanBeatmap, generation = generation })
-            return
-        end
-        if transportError ~= nil then
-            local failed = {
-                ok = false,
-                beatmap = cleanBeatmap,
-                generation = generation,
-                error = transportError,
-            }
-            state.lastError = transportError.message or transportError.code
-            emit("vote.failed", failed)
-            completeVoteCallback(callback, failed)
-            return
-        end
-
-        local status = tonumber(response and response.status) or 0
-        local parsed, parseError
-        if status < 200 or status >= 300 then
-            parseError = { code = "http_error", message = "vote server returned HTTP " .. tostring(status) }
-        else
-            parsed, parseError = parseVoteResponse(response and response.body or "")
-        end
-        if status < 200 or status >= 300 or parsed == nil then
-            local failed = {
-                ok = false,
-                beatmap = cleanBeatmap,
-                generation = generation,
-                status = status,
-                error = parseError or { code = "invalid_response", message = "vote response is invalid" },
-            }
-            state.lastError = failed.error.message or failed.error.code
-            emit("vote.failed", failed)
-            completeVoteCallback(callback, failed)
-            return
-        end
-        if parsed.beatmap ~= nil and parsed.beatmap ~= cleanBeatmap then
-            local failed = {
-                ok = false,
-                beatmap = cleanBeatmap,
-                generation = generation,
-                status = status,
-                error = { code = "mismatched_response", message = "vote response belongs to another beatmap" },
-            }
-            emit("vote.failed", failed)
-            completeVoteCallback(callback, failed)
-            return
-        end
-
-        local completed = {
-            ok = true,
-            beatmap = cleanBeatmap,
-            generation = generation,
-            status = status,
-            state = parsed,
-        }
-        state.lastError = nil
-        emit("vote.completed", completed)
-        completeVoteCallback(callback, completed)
-    end)
-    if transportId == nil then
-        return nil, "vote transport could not start"
-    end
-    return generation
-end
-
-function Api.getWanApiVote(beatmap, callback, options)
-    return performVoteRequest("GET", beatmap, nil, callback, options)
-end
-
-function Api.setWanApiVote(beatmap, direction, callback, options)
-    return performVoteRequest("PUT", beatmap, direction, callback, options)
-end
-
-function Api.clearWanApiVote(beatmap, callback, options)
-    return Api.setWanApiVote(beatmap, nil, callback, options)
-end
-
 function Api.vote(songOrId, direction, options)
     options = options or {}
     local id = type(songOrId) == "table" and songOrId.id or songOrId
@@ -2123,15 +3055,21 @@ function Api.vote(songOrId, direction, options)
     if cleanDirection ~= "up" and cleanDirection ~= "down" then
         return setError("vote direction must be 'up' or 'down'")
     end
-    local path = cleanDirection == "up" and "/song-vote/upvote/" or "/song-vote/downvote/"
+    local path = cleanDirection == "up" and "/api/song/" .. urlEncode(id) .. "/vote/up" or "/api/song/" .. urlEncode(id) .. "/vote/down"
     emit("vote.started", { id = id, direction = cleanDirection })
-    local response, err = httpPost(joinUrl(state.config.baseUrl, path .. urlEncode(id)), "")
-    if err then
-        emit("vote.failed", { id = id, direction = cleanDirection, error = err })
-        return nil, err
-    end
-    emit("vote.completed", { id = id, direction = cleanDirection, response = response })
-    return response
+    return apiRequest("POST", path, "", function(response, err)
+        if err ~= nil then
+            emit("vote.failed", { id = id, direction = cleanDirection, error = err })
+            return nil, err
+        end
+        local state, parseError = parseVoteState(response.body)
+        if parseError ~= nil then
+            emit("vote.failed", { id = id, direction = cleanDirection, error = parseError })
+            return nil, parseError
+        end
+        emit("vote.completed", { id = id, direction = cleanDirection, response = state })
+        return state
+    end)
 end
 
 function Api.upvote(songOrId, options)
@@ -2147,10 +3085,11 @@ Api._internals = {
     parseSongDetail = parseSongDetail,
     urlEncode = urlEncode,
     stripTags = stripTags,
-    deriveVoteEndpoint = deriveVoteEndpoint,
-    parseVoteResponse = parseVoteResponse,
-    redactEndpoint = redactEndpoint,
     archivePathIsSafe = archivePathIsSafe,
+    parseAccount = parseAccount,
+    parsePlaylistSearch = parsePlaylistSearch,
+    parsePlaylistDetail = parsePlaylistDetail,
+    parseVoteState = parseVoteState,
 }
 
 return Api

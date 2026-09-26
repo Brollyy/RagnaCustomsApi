@@ -68,7 +68,7 @@ def normalize_api_song(raw: dict) -> dict:
         "infoDatUrl": f"https://ragnacustoms.com{ragnabeat}" if ragnabeat else None,
         "oneClickUrl": f"ragnac://install/{song_id}",
         "zipUrl": f"https://api.ragnacustoms.com/songs/download/{song_id}",
-        "apiDetailUrl": f"https://api.ragnacustoms.com/api/song/{song_id}",
+        "apiDetailUrl": f"https://ragnacustoms.com/api/song/{song_id}",
         "apiDownloadUrl": f"https://api.ragnacustoms.com/songs/download/{song_id}",
         "twitchCode": f"!rc {song_id}",
     }

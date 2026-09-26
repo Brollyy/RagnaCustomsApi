@@ -1,6 +1,6 @@
 {
   "modId": "RagnaCustomsApi",
-  "version": "0.2.3",
+  "version": "0.3.0",
   "globals": [
     "RagnaCustomsApi",
     "RagnaCustoms"
@@ -92,6 +92,46 @@
       "signature": "getSongList(listId)"
     },
     {
+      "name": "getLastPlayed",
+      "category": "catalog",
+      "signature": "getLastPlayed(results)"
+    },
+    {
+      "name": "getLastUploaded",
+      "category": "catalog",
+      "signature": "getLastUploaded(results)"
+    },
+    {
+      "name": "getTopRated",
+      "category": "catalog",
+      "signature": "getTopRated(results, days)"
+    },
+    {
+      "name": "getAccount",
+      "category": "account",
+      "signature": "getAccount(options)"
+    },
+    {
+      "name": "searchPlaylists",
+      "category": "playlist",
+      "signature": "searchPlaylists(query, page, pageSize, options)"
+    },
+    {
+      "name": "getPlaylist",
+      "category": "playlist",
+      "signature": "getPlaylist(playlistId, options)"
+    },
+    {
+      "name": "searchCategories",
+      "category": "catalog",
+      "signature": "searchCategories(query)"
+    },
+    {
+      "name": "searchMappers",
+      "category": "catalog",
+      "signature": "searchMappers(query)"
+    },
+    {
       "name": "search",
       "category": "search",
       "signature": "search(query, options)"
@@ -137,6 +177,21 @@
       "signature": "getInstalledSong(songOrId, options)"
     },
     {
+      "name": "readInstalledSongId",
+      "category": "installed",
+      "signature": "readInstalledSongId(songFolder)"
+    },
+    {
+      "name": "writeInstalledSongId",
+      "category": "installed",
+      "signature": "writeInstalledSongId(songFolder, songId)"
+    },
+    {
+      "name": "discoverInstalledSongId",
+      "category": "installed",
+      "signature": "discoverInstalledSongId(songFolder, metadata, options)"
+    },
+    {
       "name": "isInstalled",
       "category": "installed",
       "signature": "isInstalled(songOrId, options)"
@@ -152,6 +207,16 @@
       "signature": "getSong(songOrId, options)"
     },
     {
+      "name": "getSongVote",
+      "category": "voting",
+      "signature": "getSongVote(songOrId)"
+    },
+    {
+      "name": "reviewSong",
+      "category": "voting",
+      "signature": "reviewSong(songOrId, review)"
+    },
+    {
       "name": "openOneClick",
       "category": "install",
       "signature": "openOneClick(songOrId)"
@@ -165,21 +230,6 @@
       "name": "downloadSong",
       "category": "install",
       "signature": "downloadSong(songOrId, options)"
-    },
-    {
-      "name": "getWanApiVote",
-      "category": "wanapi",
-      "signature": "getWanApiVote(beatmap, callback, options)"
-    },
-    {
-      "name": "setWanApiVote",
-      "category": "wanapi",
-      "signature": "setWanApiVote(beatmap, direction, callback, options)"
-    },
-    {
-      "name": "clearWanApiVote",
-      "category": "wanapi",
-      "signature": "clearWanApiVote(beatmap, callback, options)"
     },
     {
       "name": "vote",

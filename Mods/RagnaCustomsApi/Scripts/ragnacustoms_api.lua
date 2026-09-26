@@ -970,7 +970,9 @@ local function completedResponseBody(request)
         -- accessor. Prefer that text over a reflected object, which can be a
         -- stale partial object when VaRest completes asynchronously.
         if rawText ~= nil and (
-            rawText:find('"upvotes"', 1, true) ~= nil
+            rawText:find('"songId"', 1, true) ~= nil
+            or rawText:find('"votes"', 1, true) ~= nil
+            or rawText:find('"upvotes"', 1, true) ~= nil
             or rawText:find('"currentVote"', 1, true) ~= nil
             or rawText:find('"username"', 1, true) ~= nil
             or rawText:find('"pageSize"', 1, true) ~= nil
@@ -2224,10 +2226,10 @@ local function parseVoteState(body)
         return nil, { code = "invalid_response", message = "vote response is missing votes" }
     end
     local upvotes, downvotes = votes.up, votes.down
+    local currentVote = votes.mine
     if upvotes == nil or downvotes == nil then
         return nil, { code = "invalid_response", message = "vote response is missing counts" }
     end
-    local currentVote = votes.mine
     if currentVote == JSON_NULL then currentVote = nil end
     if currentVote ~= nil and currentVote ~= "up" and currentVote ~= "down" then
         return nil, { code = "invalid_response", message = "vote response contains an invalid selection" }

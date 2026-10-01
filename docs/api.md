@@ -230,7 +230,7 @@ searchPlaylists() uses GET /api/playlist/search with q, page, and pageSize param
 
 `getSongVote()`, `vote()`, and `reviewSong()` return the normalized vote result `{ id, currentVote, upvotes, downvotes, rating, review }`; `rating` and `review` are omitted when the server does not provide them. Consumers should use these fields instead of parsing the response body.
 
-The catalog API's wire response stores these values under `votes`: `up`, `down`, and `mine`. The library maps them to the normalized fields above; `votes.mine` is the caller's initial selection (`"up"`, `"down"`, or `null`).
+The catalog API's read response is shaped as `{ success, songId, votes, rating, permissions, myReview }`, with vote values under `votes.up`, `votes.down`, and `votes.mine`. Vote mutation responses are shaped as `{ success, songId, action, vote, votes }`; mutation responses omit `votes.mine` and put the caller's resulting selection in `vote`. The library maps both wire shapes to the normalized fields above. A selection is `"up"`, `"down"`, or `null`.
 
 ## Search
 

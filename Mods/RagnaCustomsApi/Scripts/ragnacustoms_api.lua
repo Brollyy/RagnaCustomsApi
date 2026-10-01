@@ -5,7 +5,7 @@ local Api = {
 local state = {
     config = {
         baseUrl = "https://ragnacustoms.com",
-        apiBaseUrl = "https://ragnacustoms.com",
+        apiBaseUrl = "https://api.ragnacustoms.com",
         downloadBaseUrl = "https://api.ragnacustoms.com",
         transport = "varest",
         preferApi = true,
@@ -501,6 +501,17 @@ local function unwrapRemoteValue(value)
     return value
 end
 
+local function environmentValue(name)
+    if os == nil or type(os.getenv) ~= "function" then
+        return nil
+    end
+    local ok, value = pcall(os.getenv, name)
+    if not ok or value == nil or tostring(value) == "" then
+        return nil
+    end
+    return tostring(value)
+end
+
 local function customApiEndpointParts(value)
     local endpoint = tostring(unwrapRemoteValue(value) or "")
     local schemeEnd = endpoint:find("://", 1, true)
@@ -519,15 +530,12 @@ local function customApiEndpointParts(value)
     return origin, key
 end
 
-local function environmentValue(name)
-    if os == nil or type(os.getenv) ~= "function" then
-        return nil
+local function normalizeApiOrigin(origin)
+    local value = tostring(origin or ""):gsub("/+$", "")
+    if value == "https://ragnacustoms.com" then
+        return "https://api.ragnacustoms.com"
     end
-    local ok, value = pcall(os.getenv, name)
-    if not ok or value == nil or tostring(value) == "" then
-        return nil
-    end
-    return tostring(value)
+    return value
 end
 
 local function appendUniquePath(paths, seen, root, suffix)
@@ -591,25 +599,26 @@ local function readGameConfigCustomApiUrls()
             end
         end
     end
-    return nil, { code = "game_config_missing", message = "No Ragnarock Game.ini with CustomApiURLs was found" }
+    return nil, { code = "game_config_missing", message = "No configured custom API base was found in Ragnarock Game.ini" }
 end
 
-local function adoptCustomApiEndpoint(value, options)
-    local origin, key = customApiEndpointParts(value)
-    if origin == nil or key == nil then
-        return nil
+function Api.configureFromGameCustomApiUrls(options)
+    options = options or {}
+    local values, readError = readGameConfigCustomApiUrls()
+    for _, value in ipairs(values or {}) do
+        local origin, key = customApiEndpointParts(value)
+        if origin ~= nil and key ~= nil then
+            local config = { apiKey = key }
+            if options.configureBase ~= false then
+                config.baseUrl = options.baseUrl or origin
+                config.apiBaseUrl = options.apiBaseUrl or normalizeApiOrigin(origin)
+            end
+            Api.configure(config)
+            emit("game.custom_api_url", config)
+            return config
+        end
     end
-    local config = {}
-    if options == nil or options.configureBase ~= false then
-        config.baseUrl = origin
-        config.apiBaseUrl = origin
-    end
-    if options == nil or options.configureApiKey ~= false then
-        config.apiKey = key
-    end
-    Api.configure(config)
-    emit("game.custom_api_url", config)
-    return config
+    return nil, readError or { code = "custom_api_url_missing", message = "No configured custom API URL was found" }
 end
 
 local function splitCsv(value)
@@ -1040,6 +1049,31 @@ local function completedResponseBody(request)
     return responseBody(request, true)
 end
 
+local function transportResponseBody(request)
+    local raw = safeObjectCall(function() return responseBody(request) end, "")
+    local complete = safeObjectCall(function() return completedResponseBody(request) end, "")
+    local function usable(text)
+        if text == nil or text == "" then return false end
+        local rendered = tostring(text)
+        local first = rendered:match("^%s*(.)")
+        if first == "{" or first == "[" then
+            local ok, parsed = pcall(decodeJson, rendered)
+            return ok and parsed ~= nil
+        end
+        return true
+    end
+
+    -- VaRest can expose a short, non-JSON reflected value while its completed
+    -- response object already contains the full payload. Never hand malformed
+    -- JSON to catalog/vote consumers just because it is non-empty.
+    if usable(complete) and not usable(raw) then return complete end
+    if usable(complete) and usable(raw) and #tostring(complete) > #tostring(raw) then
+        return complete
+    end
+    if raw ~= nil and raw ~= "" then return raw end
+    return complete or ""
+end
+
 local function constructVaRestRequest()
     if type(StaticFindObject) ~= "function" or type(StaticConstructObject) ~= "function" then
         return nil, "VaRest construction is unavailable"
@@ -1049,14 +1083,6 @@ local function constructVaRestRequest()
         subsystem = safeObjectCall(function()
             return FindFirstOf("VaRestSubsystem")
         end, nil)
-    end
-    if subsystem ~= nil then
-        local managedRequest = safeObjectCall(function()
-            return subsystem:ConstructVaRestRequest()
-        end, nil)
-        if managedRequest ~= nil then
-            return managedRequest, nil
-        end
     end
     local class = safeObjectCall(function()
         return StaticFindObject("/Script/VaRest.VaRestRequestJSON")
@@ -1102,7 +1128,14 @@ local function defaultHttpRequest(method, url, body, callback)
         end
         completed = true
         if not retainUntilTransportEnds then
-            releaseRequest()
+            -- VaRest may still be unwinding its native completion callback
+            -- after status reaches 4. Keep the completed request rooted briefly
+            -- while a follow-up request gets its own native transport object.
+            if type(ExecuteWithDelay) == "function" then
+                ExecuteWithDelay(10000, releaseRequest)
+            else
+                releaseRequest()
+            end
         end
         callback(response, err)
     end
@@ -1133,7 +1166,7 @@ local function defaultHttpRequest(method, url, body, callback)
         local responseCode = safeObjectCall(function()
             return tonumber(unwrapRemoteValue(request:GetResponseCode()))
         end, 0)
-        local content = responseBody(request)
+        local content = transportResponseBody(request)
         print("[RagnaCustomsApi] HTTP transport stage=complete code=" .. tostring(responseCode)
             .. " bytes=" .. tostring(#tostring(content)) .. "\n")
         if responseCode > 0 then
@@ -1177,6 +1210,7 @@ local function defaultHttpRequest(method, url, body, callback)
 
     if not completeBound and not failBound then
         local attempts = 0
+        local schedulePoll = ExecuteWithDelay or LoopAsync
         local function pollStatus()
             if completed then
                 return
@@ -1188,18 +1222,22 @@ local function defaultHttpRequest(method, url, body, callback)
             local responseCode = safeObjectCall(function()
                 return tonumber(unwrapRemoteValue(request:GetResponseCode()))
             end, 0)
+            if attempts == 1 then
+                print("[RagnaCustomsApi] HTTP transport status poll status=" .. tostring(status)
+                    .. " code=" .. tostring(responseCode) .. "\n")
+            end
             if responseCode > 0 then
-                local content = responseBody(request)
-                if content == nil or content == "" then content = completedResponseBody(request) end
+                local content = transportResponseBody(request)
                 if content ~= nil and content ~= "" then
+                    print("[RagnaCustomsApi] HTTP transport status poll body bytes=" .. tostring(#tostring(content)) .. "\n")
                     finish({ status = responseCode, body = content }, nil)
                     return
                 end
             end
             if status == 2 or status == 4 then
-                local content = responseBody(request)
-                if content == nil or content == "" then content = completedResponseBody(request) end
+                local content = transportResponseBody(request)
                 if content ~= nil and content ~= "" then
+                    print("[RagnaCustomsApi] HTTP transport status poll completed body bytes=" .. tostring(#tostring(content)) .. "\n")
                     finish({ status = responseCode > 0 and responseCode or 200, body = content }, nil)
                     return
                 end
@@ -1212,9 +1250,9 @@ local function defaultHttpRequest(method, url, body, callback)
                 finish(nil, { code = "timeout", message = "HTTP request timed out" })
                 return
             end
-            ExecuteWithDelay(500, pollStatus)
+            pcall(schedulePoll, 500, pollStatus)
         end
-        pcall(ExecuteWithDelay, 500, pollStatus)
+        pcall(schedulePoll, 500, pollStatus)
     end
 
     ExecuteWithDelay(30000, function()
@@ -1780,25 +1818,6 @@ function Api.setRuntimePaths(paths)
     return Api.getRuntimePaths()
 end
 
--- Explicitly adopt Ragnarock's configured custom API endpoint. This is opt-in
--- so merely loading the library never reads or forwards game credentials.
-function Api.configureFromGameCustomApiUrls(options)
-    options = options or {}
-    local urls, readError = readGameConfigCustomApiUrls()
-    if urls ~= nil then
-        for _, value in ipairs(urls) do
-            local origin, key = customApiEndpointParts(value)
-            if origin ~= nil and key ~= nil then
-                local configured = adoptCustomApiEndpoint(value, options)
-                print("[RagnaCustomsApi] configured API from Game.ini path=" .. tostring(state.config.gameConfigPath)
-                    .. " base=" .. tostring(configured.apiBaseUrl) .. "\n")
-                return configured
-            end
-        end
-    end
-    return nil, readError or { code = "custom_api_url_missing", message = "No configured /wanapi/score/{apiKey} endpoint was found" }
-end
-
 function Api.getRuntimePaths()
     return {
         scriptPath = state.config.scriptPath,
@@ -2217,6 +2236,9 @@ local function parseVoteState(body)
     end
     local upvotes, downvotes = votes.up, votes.down
     local currentVote = votes.mine
+    if currentVote == nil and payload.vote ~= nil then
+        currentVote = payload.vote
+    end
     if upvotes == nil or downvotes == nil then
         return nil, { code = "invalid_response", message = "vote response is missing counts" }
     end
@@ -2237,8 +2259,9 @@ local function parseVoteState(body)
             count = rating.count,
         }
     end
-    if type(payload.review) == "table" then
-        local review = payload.review
+    local reviewPayload = payload.myReview
+    if type(reviewPayload) == "table" then
+        local review = reviewPayload
         state.review = {
             funFactor = review.funFactor,
             rhythm = review.rhythm,
@@ -2247,6 +2270,12 @@ local function parseVoteState(body)
             flow = review.flow,
             levelQuality = review.levelQuality,
             feedback = review.feedback == JSON_NULL and nil or review.feedback,
+        }
+    end
+    if type(payload.permissions) == "table" then
+        state.permissions = {
+            canVote = payload.permissions.canVote,
+            canReview = payload.permissions.canReview,
         }
     end
     return state, nil

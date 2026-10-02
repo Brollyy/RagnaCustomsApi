@@ -8,29 +8,31 @@ LIB = ROOT / "Mods" / "RagnaCustomsApi" / "Scripts" / "ragnacustoms_api.lua"
 
 
 def capabilities(config: dict) -> dict:
-    song_folder = config.get("songFolder") or (
-        f"{config['gameDir'].rstrip('/')}/CustomSongs" if config.get("gameDir") else None
-    )
+    transport = config.get("transport", "varest")
+    song_folder = config.get("songFolder")
     has_song_folder = bool(song_folder)
     has_shell = config.get("allowShell") is True
     has_http_get = callable(config.get("httpGet")) or has_shell
-    has_http_request = callable(config.get("httpRequest"))
+    has_http_post = callable(config.get("httpPost")) or has_shell
+    has_http_request = callable(config.get("httpRequest")) or config.get("vaRestAvailable") is True
+    has_api_key = bool(config.get("apiKey"))
     has_download = callable(config.get("downloadFile")) or has_shell
     has_unzip = callable(config.get("unzipFile")) or has_shell
     has_list_files = callable(config.get("listFiles")) or has_shell
-    vote_configured = config.get("useWanApi") is True and config.get("runtimeWanApi") is True
     return {
         "songFolder": song_folder,
-        "canFetch": has_http_get,
-        "canSearch": has_http_get,
-        "canPreload": has_http_get,
+        "transport": transport,
+        "canAsyncFetch": transport == "varest" and has_http_request,
+        "canFetch": has_http_request if transport == "varest" else has_http_get,
+        "canSearch": has_http_request if transport == "varest" else has_http_get,
+        "canPreload": has_http_request if transport == "varest" else has_http_get,
         "canOpenOneClick": callable(config.get("openUrl")),
         "canReturnOneClick": True,
         "canDownloadZip": has_song_folder and has_download,
         "canExtractZip": has_song_folder and has_download and has_unzip,
         "canScanInstalled": has_song_folder and has_list_files,
-        "canVote": vote_configured and has_http_request,
-        "voteConfigured": vote_configured,
+        "canVote": has_api_key and (has_http_request if transport == "varest" else has_http_post),
+        "voteConfigured": has_api_key and (has_http_request if transport == "varest" else has_http_post),
     }
 
 
@@ -39,30 +41,40 @@ def marker() -> object:
 
 
 def main() -> int:
-    default = capabilities({"allowShell": True, "gameDir": "/Game/Ragnarock"})
-    assert default["songFolder"] == "/Game/Ragnarock/CustomSongs"
+    default = capabilities(
+        {
+            "gameDir": "/Game/Ragnarock",
+            "apiKey": "key",
+            "httpRequest": marker,
+            "downloadFile": marker,
+            "unzipFile": marker,
+            "listFiles": marker,
+        }
+    )
+    assert default["transport"] == "varest"
+    assert default["canAsyncFetch"] is True
+    assert default["songFolder"] is None
     assert default["canFetch"] is True
     assert default["canSearch"] is True
     assert default["canPreload"] is True
     assert default["canReturnOneClick"] is True
     assert default["canOpenOneClick"] is False
-    assert default["canDownloadZip"] is True
-    assert default["canExtractZip"] is True
-    assert default["canScanInstalled"] is True
-    assert default["canVote"] is False
+    assert default["canDownloadZip"] is False
+    assert default["canExtractZip"] is False
+    assert default["canScanInstalled"] is False
+    assert default["canVote"] is True
 
     hooked = capabilities(
         {
             "allowShell": False,
+            "transport": "varest",
             "songFolder": "C:/Songs",
-            "httpGet": marker,
             "httpRequest": marker,
+            "apiKey": "key",
             "downloadFile": marker,
             "unzipFile": marker,
             "listFiles": marker,
             "openUrl": marker,
-            "useWanApi": True,
-            "runtimeWanApi": True,
         }
     )
     assert hooked["canFetch"] is True
@@ -72,10 +84,25 @@ def main() -> int:
     assert hooked["canScanInstalled"] is True
     assert hooked["canVote"] is True
 
-    implicit = capabilities({"allowShell": False, "httpRequest": marker})
+    shell = capabilities(
+        {
+            "allowShell": True,
+            "transport": "shell",
+            "gameDir": "/Game/Ragnarock",
+            "apiKey": "key",
+        }
+    )
+    assert shell["transport"] == "shell"
+    assert shell["canAsyncFetch"] is False
+    assert shell["canFetch"] is True
+    assert shell["canVote"] is True
+
+    implicit = capabilities({"allowShell": False})
     assert implicit["canVote"] is False
 
     disabled = capabilities({"allowShell": False})
+    assert disabled["transport"] == "varest"
+    assert disabled["canAsyncFetch"] is False
     assert disabled["canFetch"] is False
     assert disabled["canDownloadZip"] is False
     assert disabled["canScanInstalled"] is False
@@ -89,6 +116,12 @@ def main() -> int:
         "canDownloadZip",
         "canScanInstalled",
         "canVote",
+        "SetHeader",
+        "requestSerial = 0",
+        "httpRequest",
+        'transport = "varest"',
+        "canAsyncFetch",
+        "function vaRestAvailable()",
     ]:
         assert expected in source, f"missing capability source marker: {expected}"
 

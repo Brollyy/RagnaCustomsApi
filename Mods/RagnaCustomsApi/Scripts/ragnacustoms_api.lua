@@ -1,5 +1,5 @@
 local Api = {
-    VERSION = "0.3.0",
+    VERSION = "0.3.1",
 }
 
 local state = {
@@ -51,6 +51,10 @@ local state = {
     subscribers = {},
     activeRequests = {},
     requestSerial = 0,
+    responseStringCopies = {},
+    responseStringCaptureKey = nil,
+    responseStringHookAttempted = false,
+    responseStringHookRegistered = false,
     status = {
         ready = false,
         loading = false,
@@ -926,24 +930,71 @@ local function responseString(value)
     return nil
 end
 
+local function responseRequestKey(request)
+    local object = unwrapRemoteValue(request)
+    local address = safeObjectCall(function() return object:GetAddress() end, nil)
+    return address ~= nil and tostring(address) or nil
+end
+
+local function installResponseStringPostHook()
+    if state.responseStringHookAttempted then return state.responseStringHookRegistered end
+    if type(RegisterHook) ~= "function" then return false end
+
+    local ok, preId, postId = pcall(RegisterHook,
+        "/Script/VaRest.VaRestRequestJSON:GetResponseContentAsString",
+        function() end,
+        function(request, returned)
+            local key = responseRequestKey(request)
+            if key == nil or key ~= state.responseStringCaptureKey then return end
+            -- The UE4SS 3.0.1 return buffer is only valid during this post-hook.
+            -- Copy it into a Lua string here, before the UFunction call unwinds.
+            local text = responseString(returned)
+            if text ~= nil and text ~= "" and not text:find("DEPRECATED", 1, true) then
+                state.responseStringCopies[key] = text
+                print("[RagnaCustomsApi] HTTP transport FString copied bytes=" .. tostring(#text) .. "\n")
+            end
+        end)
+    state.responseStringHookAttempted = true
+    state.responseStringHookRegistered = ok and postId ~= nil
+    if state.responseStringHookRegistered then
+        print("[RagnaCustomsApi] HTTP transport FString return copy hook registered\n")
+    else
+        state.responseStringHookAttempted = false
+        print("[RagnaCustomsApi] HTTP transport FString return copy hook unavailable ok=" .. tostring(ok)
+            .. " result=" .. tostring(preId) .. " post=" .. tostring(postId) .. "\n")
+    end
+    return state.responseStringHookRegistered
+end
+
 local function responseBody(request)
-    -- VaRest returns the response as an FString userdata on the UE4SS path.
-    -- Reading ResponseContent after the call can expose only a stale/truncated
-    -- reflected value, so prefer the value returned by the accessor itself.
-    local returned = safeObjectCall(function()
-        return request:GetResponseContentAsString(false)
-    end, nil)
-    local returnedText = responseString(returned)
-    if returnedText ~= nil and returnedText ~= ""
-        and not returnedText:find("DEPRECATED", 1, true) then
-        return returnedText
+    -- FString UFunction returns are copied by the post-hook while UE4SS 3.0.1's
+    -- temporary return buffer is still valid. Never call ToString on the value
+    -- returned to this frame; that wrapper may already point at dead stack data.
+    installResponseStringPostHook()
+    local key = responseRequestKey(request)
+    if key ~= nil and state.responseStringHookRegistered then
+        state.responseStringCopies[key] = nil
+        state.responseStringCaptureKey = key
+        safeObjectCall(function()
+            request:GetResponseContentAsString(false)
+            return true
+        end, false)
+        state.responseStringCaptureKey = nil
+        local copied = state.responseStringCopies[key]
+        state.responseStringCopies[key] = nil
+        if copied ~= nil then return copied end
     end
 
+    -- Keep a reflected-property fallback for UE4SS builds where hook capture is
+    -- unavailable. The completed-response path below can recover its JSON object.
     local property = safeObjectCall(function()
         return request.ResponseContent
     end, nil)
     local propertyText = responseString(property)
-    if propertyText ~= nil and propertyText ~= "" then return propertyText end
+    if propertyText ~= nil and propertyText ~= ""
+        and not propertyText:find("DEPRECATED", 1, true) then
+        return propertyText
+    end
     return ""
 end
 
@@ -963,6 +1014,9 @@ local function completedResponseBody(request)
     end
     if responseObject ~= nil then
         local rawText = responseBody(request)
+        -- The post-hook copied FString result is complete while its native return
+        -- buffer is live. Avoid re-reading individual FString fields when it has
+        -- the expected search-result envelope.
         if rawText ~= nil and rawText:find('"Results"', 1, true) ~= nil then
             return rawText
         end

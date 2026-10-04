@@ -1250,9 +1250,11 @@ local function defaultHttpRequest(method, url, body, callback)
         for name, value in pairs(requestHeaders()) do
             request:SetHeader(tostring(name), tostring(value))
         end
-        if method ~= "GET" then
+        if method ~= "GET" and body ~= nil and body ~= "" then
+            -- Vote mutations intentionally send an empty POST body, so there
+            -- is no JSON payload for VaRest to decode in that case.
             local requestObject = unwrapRemoteValue(request:GetRequestObject())
-            requestObject:DecodeJson(body or "{}", true)
+            requestObject:DecodeJson(body, true)
         end
         request:ProcessURL(url)
     end)

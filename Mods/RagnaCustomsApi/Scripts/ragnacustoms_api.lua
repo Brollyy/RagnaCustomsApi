@@ -1,5 +1,5 @@
 local Api = {
-    VERSION = "0.3.0",
+    VERSION = "0.3.1",
 }
 
 local state = {
@@ -51,6 +51,14 @@ local state = {
     subscribers = {},
     activeRequests = {},
     requestSerial = 0,
+    delayedCallbackSerial = 0,
+    delayedCallbacks = {},
+    gameThreadCallbackSerial = 0,
+    gameThreadCallbacks = {},
+    responseStringCopies = {},
+    responseStringCaptureKey = nil,
+    responseStringHookAttempted = false,
+    responseStringHookRegistered = false,
     status = {
         ready = false,
         loading = false,
@@ -926,24 +934,71 @@ local function responseString(value)
     return nil
 end
 
+local function responseRequestKey(request)
+    local object = unwrapRemoteValue(request)
+    local address = safeObjectCall(function() return object:GetAddress() end, nil)
+    return address ~= nil and tostring(address) or nil
+end
+
+local function installResponseStringPostHook()
+    if state.responseStringHookAttempted then return state.responseStringHookRegistered end
+    if type(RegisterHook) ~= "function" then return false end
+
+    local ok, preId, postId = pcall(RegisterHook,
+        "/Script/VaRest.VaRestRequestJSON:GetResponseContentAsString",
+        function() end,
+        function(request, returned)
+            local key = responseRequestKey(request)
+            if key == nil or key ~= state.responseStringCaptureKey then return end
+            -- The UE4SS 3.0.1 return buffer is only valid during this post-hook.
+            -- Copy it into a Lua string here, before the UFunction call unwinds.
+            local text = responseString(returned)
+            if text ~= nil and text ~= "" and not text:find("DEPRECATED", 1, true) then
+                state.responseStringCopies[key] = text
+                print("[RagnaCustomsApi] HTTP transport FString copied bytes=" .. tostring(#text) .. "\n")
+            end
+        end)
+    state.responseStringHookAttempted = true
+    state.responseStringHookRegistered = ok and postId ~= nil
+    if state.responseStringHookRegistered then
+        print("[RagnaCustomsApi] HTTP transport FString return copy hook registered\n")
+    else
+        state.responseStringHookAttempted = false
+        print("[RagnaCustomsApi] HTTP transport FString return copy hook unavailable ok=" .. tostring(ok)
+            .. " result=" .. tostring(preId) .. " post=" .. tostring(postId) .. "\n")
+    end
+    return state.responseStringHookRegistered
+end
+
 local function responseBody(request)
-    -- VaRest returns the response as an FString userdata on the UE4SS path.
-    -- Reading ResponseContent after the call can expose only a stale/truncated
-    -- reflected value, so prefer the value returned by the accessor itself.
-    local returned = safeObjectCall(function()
-        return request:GetResponseContentAsString(false)
-    end, nil)
-    local returnedText = responseString(returned)
-    if returnedText ~= nil and returnedText ~= ""
-        and not returnedText:find("DEPRECATED", 1, true) then
-        return returnedText
+    -- FString UFunction returns are copied by the post-hook while UE4SS 3.0.1's
+    -- temporary return buffer is still valid. Never call ToString on the value
+    -- returned to this frame; that wrapper may already point at dead stack data.
+    installResponseStringPostHook()
+    local key = responseRequestKey(request)
+    if key ~= nil and state.responseStringHookRegistered then
+        state.responseStringCopies[key] = nil
+        state.responseStringCaptureKey = key
+        safeObjectCall(function()
+            request:GetResponseContentAsString(false)
+            return true
+        end, false)
+        state.responseStringCaptureKey = nil
+        local copied = state.responseStringCopies[key]
+        state.responseStringCopies[key] = nil
+        if copied ~= nil then return copied end
     end
 
+    -- Keep a reflected-property fallback for UE4SS builds where hook capture is
+    -- unavailable. The completed-response path below can recover its JSON object.
     local property = safeObjectCall(function()
         return request.ResponseContent
     end, nil)
     local propertyText = responseString(property)
-    if propertyText ~= nil and propertyText ~= "" then return propertyText end
+    if propertyText ~= nil and propertyText ~= ""
+        and not propertyText:find("DEPRECATED", 1, true) then
+        return propertyText
+    end
     return ""
 end
 
@@ -963,6 +1018,9 @@ local function completedResponseBody(request)
     end
     if responseObject ~= nil then
         local rawText = responseBody(request)
+        -- The post-hook copied FString result is complete while its native return
+        -- buffer is live. Avoid re-reading individual FString fields when it has
+        -- the expected search-result envelope.
         if rawText ~= nil and rawText:find('"Results"', 1, true) ~= nil then
             return rawText
         end
@@ -979,10 +1037,18 @@ local function completedResponseBody(request)
         ) then
             return rawText
         end
+        local jsonFieldFunctionPaths = {
+            GetObjectArrayField = "Function /Script/VaRest.VaRestJsonObject:GetObjectArrayField",
+            GetIntegerField = "Function /Script/VaRest.VaRestJsonObject:GetIntegerField",
+            GetNumberField = "Function /Script/VaRest.VaRestJsonObject:GetNumberField",
+            GetStringField = "Function /Script/VaRest.VaRestJsonObject:GetStringField",
+        }
         local function jsonFieldFunction(name)
             if type(StaticFindObject) ~= "function" then return nil end
+            local path = jsonFieldFunctionPaths[name]
+            if path == nil then return nil end
             return safeObjectCall(function()
-                return StaticFindObject("Function /Script/VaRest.VaRestJsonObject:" .. name)
+                return StaticFindObject(path)
             end, nil)
         end
         local function jsonField(object, functionName, fieldName, fallback)
@@ -1122,6 +1188,43 @@ local function defaultHttpRequest(method, url, body, callback)
     local function releaseRequest()
         state.activeRequests[requestId] = nil
     end
+    local function executeOnGameThread(action)
+        if type(ExecuteInGameThread) ~= "function" then
+            action()
+            return true
+        end
+        state.gameThreadCallbackSerial = state.gameThreadCallbackSerial + 1
+        local callbackId = state.gameThreadCallbackSerial
+        local gameThreadCallback = function(...)
+            state.gameThreadCallbacks[callbackId] = nil
+            action(...)
+        end
+        state.gameThreadCallbacks[callbackId] = gameThreadCallback
+        local ok, err = pcall(ExecuteInGameThread, gameThreadCallback)
+        if not ok then state.gameThreadCallbacks[callbackId] = nil end
+        if not ok then
+            print("[RagnaCustomsApi] HTTP transport game-thread dispatch failed: " .. tostring(err) .. "\n")
+        end
+        return ok
+    end
+    local function delayOnGameThread(delayMs, action)
+        if type(ExecuteWithDelay) ~= "function" then
+            return false, "UE4SS delayed execution is unavailable"
+        end
+        -- UE4SS 3.0.1 stores a registry reference for delayed Lua callbacks.
+        -- Keep the closure strongly rooted until it runs; otherwise a GC can
+        -- invalidate that reference before the delayed action is dispatched.
+        state.delayedCallbackSerial = state.delayedCallbackSerial + 1
+        local callbackId = state.delayedCallbackSerial
+        local delayedCallback = function()
+            state.delayedCallbacks[callbackId] = nil
+            executeOnGameThread(action)
+        end
+        state.delayedCallbacks[callbackId] = delayedCallback
+        local ok, err = pcall(ExecuteWithDelay, delayMs, delayedCallback)
+        if not ok then state.delayedCallbacks[callbackId] = nil end
+        return ok, err
+    end
     local function finish(response, err, retainUntilTransportEnds)
         if completed then
             return
@@ -1132,7 +1235,7 @@ local function defaultHttpRequest(method, url, body, callback)
             -- after status reaches 4. Keep the completed request rooted briefly
             -- while a follow-up request gets its own native transport object.
             if type(ExecuteWithDelay) == "function" then
-                ExecuteWithDelay(10000, releaseRequest)
+                delayOnGameThread(10000, releaseRequest)
             else
                 releaseRequest()
             end
@@ -1185,6 +1288,8 @@ local function defaultHttpRequest(method, url, body, callback)
     end)
     if not completeBound and not failBound then
         print("[RagnaCustomsApi] HTTP transport events unavailable; using status fallback\n")
+    else
+        print("[RagnaCustomsApi] HTTP transport event callback bound; status fallback remains active\n")
     end
 
     local configured, configuredError = pcall(function()
@@ -1196,9 +1301,11 @@ local function defaultHttpRequest(method, url, body, callback)
         for name, value in pairs(requestHeaders()) do
             request:SetHeader(tostring(name), tostring(value))
         end
-        if method ~= "GET" then
+        if method ~= "GET" and body ~= nil and body ~= "" then
+            -- Vote mutations intentionally send an empty POST body, so there
+            -- is no JSON payload for VaRest to decode in that case.
             local requestObject = unwrapRemoteValue(request:GetRequestObject())
-            requestObject:DecodeJson(body or "{}", true)
+            requestObject:DecodeJson(body, true)
         end
         request:ProcessURL(url)
     end)
@@ -1208,10 +1315,13 @@ local function defaultHttpRequest(method, url, body, callback)
         return nil
     end
 
-    if not completeBound and not failBound then
+    do
+        -- VaRest can expose a delegate that accepts Add() but never dispatches
+        -- completion on this UE4SS build. Keep the status poll as an independent
+        -- fallback; finish() makes a later delegate callback harmless.
         local attempts = 0
         local schedulePoll = ExecuteWithDelay or LoopAsync
-        local function pollStatus()
+        local function pollStatusOnGameThread()
             if completed then
                 return
             end
@@ -1250,15 +1360,45 @@ local function defaultHttpRequest(method, url, body, callback)
                 finish(nil, { code = "timeout", message = "HTTP request timed out" })
                 return
             end
-            pcall(schedulePoll, 500, pollStatus)
+            local scheduled, scheduleError
+            if schedulePoll == ExecuteWithDelay then
+                scheduled, scheduleError = delayOnGameThread(500, pollStatusOnGameThread)
+            else
+                scheduled, scheduleError = pcall(schedulePoll, 500, function()
+                    local dispatched = executeOnGameThread(pollStatusOnGameThread)
+                    if not dispatched then
+                        finish(nil, {
+                            code = "game_thread_dispatch_failed",
+                            message = "UE4SS could not dispatch the HTTP status poll to the game thread",
+                        })
+                    end
+                end)
+            end
+            if not scheduled then
+                finish(nil, { code = "scheduler_unavailable", message = tostring(scheduleError) })
+            end
         end
-        pcall(schedulePoll, 500, pollStatus)
+        local scheduled, scheduleError
+        if schedulePoll == ExecuteWithDelay then
+            scheduled, scheduleError = delayOnGameThread(500, pollStatusOnGameThread)
+        else
+            scheduled, scheduleError = pcall(schedulePoll, 500, function()
+                local dispatched = executeOnGameThread(pollStatusOnGameThread)
+                if not dispatched then
+                    finish(nil, {
+                        code = "game_thread_dispatch_failed",
+                        message = "UE4SS could not dispatch the HTTP status poll to the game thread",
+                    })
+                end
+            end)
+        end
+        if not scheduled then
+            finish(nil, { code = "scheduler_unavailable", message = tostring(scheduleError) })
+        end
     end
 
-    ExecuteWithDelay(30000, function()
-        if completed then
-            return
-        end
+    delayOnGameThread(30000, function()
+        if completed then return end
         timedOut = true
         print("[RagnaCustomsApi] HTTP transport stage=timeout\n")
         finish(nil, {
